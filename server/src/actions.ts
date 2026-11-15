@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { academicPeriod, dueAtMoscow, formatRuDate, longDay, moscowHour, moscowToday, resolveWhen, ruCount } from "../../shared/src/dates";
+import { academicPeriod, addDays, dueAtMoscow, formatRuDate, formatWeekSpan, longDay, mondayOf, moscowHour, moscowToday, nearestStudyDay, resolveWhen, shortDayDate, studyWeek } from "../../shared/src/dates";
 import {
   defaultPurpose,
   kindMeta,
@@ -13,6 +13,7 @@ import {
   type Proposal,
   type PublicUser,
   type RequestStatus,
+  type LessonView,
   type Theme,
   type UiDirective,
   type UndoPayload,
@@ -489,31 +490,33 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
     };
   },
   async get_schedule(user, args) {
-    const when = (args.when as "today") || "week";
-    const resolved = resolveWhen(when);
-    const data = await loadSchedule(user, resolved.focus, true);
-    const mode = when === "today" || when === "tomorrow" || when === "day_after" ? "day" : "week";
-    const pool = mode === "day" ? data.items.filter((item) => item.date === resolved.focus) : data.items;
-    if (mode === "week") {
-      return {
-        summary: narrateWeekSchedule(pool, { label: resolved.label, sundayNote: resolved.sundayNote }),
-        card: { title: resolved.label, rows: weekCardRows(pool) },
-        ui: [{ type: "navigate", to: `/schedule?date=${resolved.focus}`, highlight: `schedule-day-${resolved.focus}` }],
-      };
+    const when = String(args.when || "week");
+    const showGroup = user.role === "teacher";
+    if (when === "changes") return scheduleChanges(user, showGroup);
+    if (when === "next_lesson") return nextLesson(user, String(args.subject || ""), showGroup);
+    if (when === "month") return monthOverview(user, Number(args.month || 0), showGroup);
+    if (when === "date" && typeof args.date === "string") {
+      const date = args.date;
+      const data = await loadSchedule(user, date, true);
+      return scheduleAnswer(user, data.items.filter((item) => item.date === date), shortDayDate(date), false, date, showGroup);
     }
-    const shown = pool.slice(0, 8);
-    const summary = `${resolved.sundayNote ? "Сегодня воскресенье. " : ""}${resolved.label}: ${pool.length ? ruCount(pool.length, "занятие", "занятия", "занятий") : "занятий нет."}`;
-    return {
-      summary,
-      card: {
-        title: resolved.label,
-        rows: shown.map((item) => ({
-          label: `${item.startsAt}–${item.endsAt}`,
-          value: `${item.discipline}${item.groupName ? `, ${item.groupName}` : ""}${item.room ? `, ауд. ${item.room}` : ""}`,
-        })),
-      },
-      ui: [{ type: "navigate", to: `/schedule?date=${resolved.focus}`, highlight: `schedule-day-${resolved.focus}` }],
-    };
+    if (when === "range" && typeof args.from === "string") {
+      const from = args.from;
+      const to = typeof args.to === "string" ? args.to : studyWeek(from).at(-1) ?? from;
+      const data = await loadSchedule(user, from, true);
+      const items = data.items.filter((item) => item.date >= from && item.date <= to);
+      return scheduleAnswer(user, items, `С ${shortDayDate(from).split(", ").slice(1).join(", ")}`, false, from, showGroup);
+    }
+    if (when === "week" && typeof args.date === "string") {
+      const days = studyWeek(args.date);
+      const data = await loadSchedule(user, args.date, true);
+      return scheduleAnswer(user, data.items, `Неделя ${formatWeekSpan(days[0], days[5])}`, false, days[0], showGroup);
+    }
+    const resolved = resolveWhen(when as "today");
+    const data = await loadSchedule(user, resolved.focus, true);
+    const day = when === "today" || when === "tomorrow" || when === "day_after";
+    const pool = day ? data.items.filter((item) => item.date === resolved.focus) : data.items;
+    return scheduleAnswer(user, pool, resolved.label, resolved.sundayNote, resolved.focus, showGroup);
   },
   async get_grades(user, args) {
     return gradesAnswer(user, args, "overview");
@@ -907,6 +910,93 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
 };
 
 export const actionHandlers = handlers;
+
+function scheduleAnswer(user: PublicUser, items: LessonView[], label: string, sundayNote: boolean, focus: string, showGroup: boolean): Outcome {
+  void user;
+  return {
+    summary: narrateWeekSchedule(items, { label, sundayNote, showGroup }),
+    card: { title: label || shortDayDate(focus), rows: weekCardRows(items, showGroup) },
+    ui: [{ type: "navigate", to: `/schedule?date=${focus}`, highlight: `schedule-day-${focus}` }],
+  };
+}
+
+async function weeksOf(user: PublicUser, fromMonday: string, until: string) {
+  const items: LessonView[] = [];
+  for (let monday = fromMonday; monday <= until; monday = addDays(monday, 7)) {
+    const data = await loadSchedule(user, monday, true);
+    for (const item of data.items) if (!items.some((have) => have.id === item.id)) items.push(item);
+  }
+  return items;
+}
+
+async function scheduleChanges(user: PublicUser, showGroup: boolean): Promise<Outcome> {
+  const today = moscowToday();
+  const start = nearestStudyDay(today);
+  const end = addDays(mondayOf(start), 20);
+  const items = (await weeksOf(user, mondayOf(start), end)).filter((item) => item.changeType !== "none" && item.date >= today && item.date <= end);
+  const summary = items.length
+    ? narrateWeekSchedule(items, { label: "Изменения в ближайшие три недели", sundayNote: false, showGroup })
+    : "В ближайшие три недели изменений в расписании нет.";
+  return {
+    summary,
+    card: { title: "Изменения", rows: weekCardRows(items, showGroup) },
+    ui: [{ type: "navigate", to: `/schedule?date=${items[0]?.date ?? start}`, highlight: "schedule" }],
+  };
+}
+
+async function nextLesson(user: PublicUser, subject: string, showGroup: boolean): Promise<Outcome> {
+  if (!subject) return { summary: "По какому предмету? Например: «когда следующая пара по базам данных»." };
+  const today = moscowToday();
+  const end = addDays(today, 56);
+  const items = (await weeksOf(user, mondayOf(nearestStudyDay(today)), end)).filter(
+    (item) => item.date >= today && item.date <= end && subjectFits(item.discipline, subject) && stillMeets(item),
+  );
+  items.sort((a, b) => a.date.localeCompare(b.date) || a.startsAt.localeCompare(b.startsAt));
+  const next = items[0];
+  if (!next) return { summary: `Пары по «${subject}» в ближайшие недели нет.` };
+  const where = [showGroup ? next.groupName : null, next.room ? `ауд. ${next.room}` : null].filter(Boolean).join(", ");
+  return {
+    summary: `Следующая пара по «${next.discipline}»: ${shortDayDate(next.date)}, ${next.startsAt}–${next.endsAt}${where ? `, ${where}` : ""}.`,
+    card: { title: next.discipline, rows: [{ label: shortDayDate(next.date), value: `${next.startsAt}–${next.endsAt}${where ? `, ${where}` : ""}` }] },
+    ui: [{ type: "navigate", to: `/schedule?date=${next.date}`, highlight: `lesson-${next.id}` }],
+  };
+}
+
+async function monthOverview(user: PublicUser, month: number, showGroup: boolean): Promise<Outcome> {
+  void showGroup;
+  if (month < 1 || month > 12) return { summary: "Какой месяц открыть? Например: «в декабре»." };
+  const year = Number(moscowToday().slice(0, 4));
+  const first = `${year}-${String(month).padStart(2, "0")}-01`;
+  const last = `${year}-${String(month).padStart(2, "0")}-${String(new Date(Date.UTC(year, month, 0)).getUTCDate()).padStart(2, "0")}`;
+  const names = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+  const rows: { label: string; value: string }[] = [];
+  for (let monday = mondayOf(first); monday <= last; monday = addDays(monday, 7)) {
+    const data = await loadSchedule(user, monday, true);
+    const inMonth = data.items.filter((item) => item.date >= first && item.date <= last);
+    const changes = inMonth.filter((item) => item.changeType !== "none");
+    const days = studyWeek(monday);
+    rows.push({
+      label: formatWeekSpan(days[0], days[5]),
+      value: `${inMonth.filter((item) => item.changeType !== "cancelled").length} пар${changes.length ? `, изменения: ${changes.length}` : ""}`,
+    });
+  }
+  return {
+    summary: `${names[month - 1][0].toUpperCase()}${names[month - 1].slice(1)}. Какую неделю открыть? Например: «на неделе 7 декабря».\n${rows.map((row) => `${row.label}: ${row.value}`).join("\n")}`,
+    card: { title: names[month - 1], rows },
+    ui: [{ type: "navigate", to: `/schedule?date=${first}`, highlight: "schedule" }],
+  };
+}
+
+function stillMeets(item: LessonView) {
+  if (item.changeType === "cancelled") return false;
+  return !(item.changeType === "moved" && (item.changeNote ?? "").toLowerCase().includes("перенесено на"));
+}
+
+function subjectFits(discipline: string, subject: string) {
+  const left = discipline.toLowerCase().replace(/ё/g, "е");
+  const right = subject.toLowerCase().replace(/ё/g, "е");
+  return left.includes(right) || right.includes(left);
+}
 
 async function gradesAnswer(user: PublicUser, args: Record<string, unknown>, mode: "overview" | "advice"): Promise<Outcome> {
   const today = moscowToday();

@@ -1,12 +1,12 @@
 import { and, count, eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { formatWeekSpan, mondayOf, scheduleLook } from "../../shared/src/dates";
+import { formatDdMm, formatWeekSpan, mondayOf, scheduleLook } from "../../shared/src/dates";
 import { buildApp } from "../src/app";
 import { getDb } from "../src/db/client";
 import { extendSchedule } from "../src/db/seed-schedule-extend";
 import { seed } from "../src/db/seed";
 import { seedHomework } from "../src/db/seed-homework";
-import { assignments, disciplines, marks, scheduleItems, submissions, users } from "../src/db/schema";
+import { assignments, disciplines, marks, notifications, scheduleItems, submissions, users } from "../src/db/schema";
 
 let app: Awaited<ReturnType<typeof buildApp>>;
 
@@ -141,11 +141,39 @@ it("преподаватель видит свою неделю, а подпис
   });
   const studentSay = studentTurn.json().say as string;
   expect(studentSay).toMatch(/Пн, \d{1,2} /);
-  expect(studentSay).toContain("БИ-3-26-04");
+  expect(studentSay).not.toContain("БИ-3-26-04");
   expect(studentSay).toMatch(/ауд\./);
   expect(studentSay).toContain("отменена");
   expect(studentSay).toContain("другая аудитория");
   expect(studentSay).toContain("перенос");
+});
+
+it("замена аудитории обновляет уже отправленное уведомление", async () => {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(scheduleItems)
+    .where(and(eq(scheduleItems.changeType, "room"), eq(scheduleItems.discipline, "Программирование")));
+  const oldNote = "Аудитория изменена: была 401, теперь 415";
+  await db.update(scheduleItems).set({ changeNote: oldNote }).where(eq(scheduleItems.id, row.id));
+  const [sorokin] = await db.select().from(users).where(eq(users.login, "sorokin.mo"));
+  const [note] = await db
+    .insert(notifications)
+    .values({
+      userId: sorokin.id,
+      kind: "schedule",
+      title: "Изменение в расписании",
+      body: `${formatDdMm(row.date)} Программирование: ${oldNote}`,
+      href: `/schedule?date=${row.date}`,
+    })
+    .returning();
+  await extendSchedule();
+  const [fresh] = await db.select().from(notifications).where(eq(notifications.id, note.id));
+  expect(fresh.body).toContain("была 314");
+  expect(fresh.body).not.toContain("была 401");
+  await extendSchedule();
+  const [again] = await db.select().from(notifications).where(eq(notifications.id, note.id));
+  expect(again.body).toBe(fresh.body);
 });
 
 it("прошедшая дата не называется ближайшей", () => {

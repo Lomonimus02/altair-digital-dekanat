@@ -66,37 +66,36 @@ export function narrateSchedule(opts: {
   return `${head}\n${lines.join("\n")}`;
 }
 
-export function narrateWeekSchedule(items: LessonView[], opts: { label: string; sundayNote: boolean }): string {
+export function narrateWeekSchedule(items: LessonView[], opts: { label: string; sundayNote: boolean; showGroup?: boolean }): string {
   const prefix = opts.sundayNote ? "Сегодня воскресенье. " : "";
-  if (!items.length) return `${prefix}${opts.label}: занятий нет.`;
+  const showGroup = opts.showGroup ?? true;
+  if (!items.length) return `${prefix}${opts.label || "В этот день"}: занятий нет.`;
+  const lines = grouped(items).map(({ date, lessons }) => `${shortDayDate(date)}: ${lessons.map((lesson) => formatWeekLesson(lesson, showGroup)).join("; ")}`);
+  return `${prefix}${opts.label ? `${opts.label}\n` : ""}${lines.join("\n")}`;
+}
+
+export function weekCardRows(items: LessonView[], showGroup = true): { label: string; value: string }[] {
+  return grouped(items).map(({ date, lessons }) => ({
+    label: shortDayDate(date),
+    value: lessons.map((lesson) => formatWeekLesson(lesson, showGroup)).join("; "),
+  }));
+}
+
+function grouped(items: LessonView[]) {
   const byDate = new Map<string, LessonView[]>();
   for (const item of items) {
     const list = byDate.get(item.date) ?? [];
     list.push(item);
     byDate.set(item.date, list);
   }
-  const lines = [...byDate.keys()].sort().map((date) => {
-    const lessons = (byDate.get(date) ?? []).slice().sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.pairNumber - b.pairNumber);
-    return `${shortDayDate(date)}: ${lessons.map(formatWeekLesson).join("; ")}`;
-  });
-  return `${prefix}${opts.label}\n${lines.join("\n")}`;
+  return [...byDate.keys()].sort().map((date) => ({
+    date,
+    lessons: (byDate.get(date) ?? []).slice().sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.pairNumber - b.pairNumber),
+  }));
 }
 
-export function weekCardRows(items: LessonView[]): { label: string; value: string }[] {
-  const byDate = new Map<string, LessonView[]>();
-  for (const item of items) {
-    const list = byDate.get(item.date) ?? [];
-    list.push(item);
-    byDate.set(item.date, list);
-  }
-  return [...byDate.keys()].sort().map((date) => {
-    const lessons = (byDate.get(date) ?? []).slice().sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.pairNumber - b.pairNumber);
-    return { label: shortDayDate(date), value: lessons.map(formatWeekLesson).join("; ") };
-  });
-}
-
-function formatWeekLesson(lesson: LessonView): string {
-  const place = [lesson.groupName, lesson.room ? `ауд. ${lesson.room}` : null].filter(Boolean).join(", ");
+function formatWeekLesson(lesson: LessonView, showGroup: boolean): string {
+  const place = [showGroup ? lesson.groupName : null, lesson.room ? `ауд. ${lesson.room}` : null].filter(Boolean).join(", ");
   return `${lesson.startsAt} ${lesson.discipline}${place ? `, ${place}` : ""}${weekChange(lesson)}`;
 }
 

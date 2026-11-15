@@ -1,5 +1,6 @@
 import type { Proposal, RequestKind, Role } from "./domain";
 import { addDays, moscowToday, weekdayIndex } from "./dates";
+import { scheduleAsk } from "./schedule-ask";
 
 const ALIASES: [string, string][] = [
   ["матан", "математический анализ"],
@@ -160,9 +161,8 @@ export function parseIntent(message: string, role: Role, disciplines: string[] =
     const subject = matchDiscipline(t, disciplines) ?? t.replace(/.*сводка по\s*/, "");
     return step("Смотрю предмет.", "get_session_navigator", { subject });
   }
-  if (/расписан|пары|занят|что у меня|что завтра|что сегодня|послезавтра|следующ(ая|ую) недел|прошл(ая|ую) недел/.test(t)) {
-    return step("Смотрю расписание.", "get_schedule", { when: detectWhen(t) });
-  }
+  const asked = scheduleAsk(t, disciplines);
+  if (asked) return step("Смотрю расписание.", "get_schedule", { ...asked });
   if (/профил|кто я|моя группа|мой групп|номер зачет|номер зачёт|зачетк|зачётк/.test(t)) {
     return step("Открываю профиль.", "get_profile", {});
   }
@@ -240,7 +240,8 @@ function parseTeacher(t: string, raw: string): Proposal | null {
       ...(discipline ? { subject: discipline } : {}),
     });
   }
-  if (/расписан|недел/.test(t)) return step("Смотрю расписание.", "get_schedule", { when: detectWhen(t) });
+  const asked = scheduleAsk(t);
+  if (asked) return step("Смотрю расписание.", "get_schedule", { ...asked });
   return null;
 }
 
@@ -345,15 +346,6 @@ function detectKind(t: string): RequestKind | null {
   if (t.includes("справк")) return "study_certificate";
   if (t.includes("заявлен")) return "free_form";
   return null;
-}
-
-function detectWhen(t: string) {
-  if (t.includes("послезавтра")) return "day_after";
-  if (t.includes("завтра")) return "tomorrow";
-  if (t.includes("сегодня")) return "today";
-  if (t.includes("следующ")) return "next_week";
-  if (t.includes("прошл")) return "prev_week";
-  return "week";
 }
 
 function extractRequestId(t: string): number | null {

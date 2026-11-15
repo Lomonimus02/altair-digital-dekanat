@@ -29,6 +29,9 @@ it("воскресенье открывает следующую учебную 
   expect(sunday.sundayNote).toBe(true);
   expect(resolveWhen("today", "2026-11-15").focus).toBe("2026-11-16");
   expect(resolveWhen("today", "2026-11-13")).toMatchObject({ focus: "2026-11-13", label: "Сегодня" });
+  expect(resolveWhen("next_week", "2026-11-15").focus).toBe("2026-11-23");
+  expect(resolveWhen("week", "2026-11-25").focus).toBe("2026-11-25");
+  expect(resolveWhen("next_week", "2026-11-25").focus).toBe("2026-11-30");
   expect(resolveWhen("tomorrow", "2026-11-13").focus).toBe("2026-11-14");
 });
 

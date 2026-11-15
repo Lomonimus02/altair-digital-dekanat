@@ -1,4 +1,4 @@
-import { and, asc, eq, ne } from "drizzle-orm";
+import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { addDays, formatDdMm, mondayOf, studyWeek, weekdayIndex } from "../../../shared/src/dates";
 import { getDb, getPool } from "./client";
 import { announcements, assignments, notifications, scheduleItems, users } from "./schema";
@@ -201,6 +201,17 @@ async function fixChangeNotes() {
     note = note.replace(/, (\d)\.(\d{2})$/g, (_, day: string, month: string) => `, 0${day}.${month}`);
     if (note === row.changeNote) continue;
     await db.update(scheduleItems).set({ changeNote: note }).where(eq(scheduleItems.id, row.id));
+    if (row.changeType !== "room") continue;
+    await db
+      .update(notifications)
+      .set({ body: sql`replace(${notifications.body}, ${row.changeNote}, ${note})` })
+      .where(
+        and(
+          eq(notifications.title, "Изменение в расписании"),
+          sql`${notifications.body} like ${"%" + row.discipline + "%"}`,
+          sql`${notifications.body} like ${"%" + row.changeNote + "%"}`,
+        ),
+      );
   }
 }
 

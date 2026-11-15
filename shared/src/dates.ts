@@ -164,7 +164,7 @@ function termLabel(startYear: number, term: "fall" | "spring"): AcademicTerm {
 
 export function resolveWhen(when: "today" | "tomorrow" | "day_after" | "week" | "next_week" | "prev_week", today = moscowToday()) {
   if (when === "next_week") {
-    const focus = addDays(mondayOf(today), 7);
+    const focus = addDays(mondayOf(nearestStudyDay(today)), 7);
     return { focus, label: "Следующая неделя", sundayNote: false };
   }
   if (when === "prev_week") {
@@ -182,6 +182,13 @@ export function resolveWhen(when: "today" | "tomorrow" | "day_after" | "week" | 
   }
   const names = { today: "Сегодня", tomorrow: "Завтра", day_after: "Послезавтра" } as const;
   return { focus: raw, label: names[when], sundayNote: false };
+}
+
+/** Ближайший такой день недели. skipNearest — «следующий четверг», то есть через один. */
+export function upcomingWeekday(today: string, weekday: number, skipNearest = false): string {
+  let delta = (weekday - weekdayIndex(today) + 7) % 7;
+  if (skipNearest) delta += 7;
+  return addDays(today, delta);
 }
 
 export function dueAtMoscow(day: "today" | "tomorrow" | "day_after", time: string, today = moscowToday()): string {
