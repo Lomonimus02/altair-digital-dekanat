@@ -1,0 +1,217 @@
+import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { academicPeriod, addDays, longDay, mondayOf, studyWeek, weekdayRu } from "../../shared/src/dates";
+import { addressName, initials, type LessonView, type PublicUser, type Role, type Theme } from "../../shared/src/domain";
+import { getDb } from "./db/client";
+import {
+  announcements,
+  auditLog,
+  disciplines,
+  marks,
+  notifications,
+  reminders,
+  requestEvents,
+  requests,
+  scheduleFlags,
+  scheduleItems,
+  users,
+} from "./db/schema";
+import { notFound } from "./httpError";
+
+type UserRow = typeof users.$inferSelect;
+
+export function toPublic(row: UserRow): PublicUser {
+  return {
+    id: row.id,
+    login: row.login,
+    role: row.role as Role,
+    fullName: row.fullName,
+    addressName: addressName(row.fullName),
+    initials: initials(row.fullName),
+    institute: row.institute,
+    direction: row.direction,
+    course: row.course,
+    groupName: row.groupName,
+    recordBook: row.recordBook,
+    theme: row.theme as Theme,
+    showCancelled: row.showCancelled,
+  };
+}
+
+export async function findUserByLogin(login: string) {
+  const rows = await getDb().select().from(users).where(eq(users.login, login)).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function findUserById(id: number) {
+  const rows = await getDb().select().from(users).where(eq(users.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function loadSchedule(user: PublicUser, focus: string, includeCancelled = true) {
+  if (!user.groupName) return { today: focus, focus, weekStart: mondayOf(focus), days: [], items: [] as LessonView[] };
+  const days = studyWeek(focus);
+  const rows = await getDb()
+    .select()
+    .from(scheduleItems)
+    .where(and(eq(scheduleItems.groupName, user.groupName), gte(scheduleItems.date, days[0]), lte(scheduleItems.date, days[5])))
+    .orderBy(asc(scheduleItems.date), asc(scheduleItems.pairNumber));
+  const ids = rows.map((row) => row.id);
+  const flags = ids.length
+    ? await getDb()
+        .select()
+        .from(scheduleFlags)
+        .where(and(eq(scheduleFlags.userId, user.id), inArray(scheduleFlags.scheduleItemId, ids)))
+    : [];
+  const flagged = new Set(flags.filter((flag) => flag.flagged).map((flag) => flag.scheduleItemId));
+  const items: LessonView[] = rows
+    .filter((row) => includeCancelled || row.changeType !== "cancelled")
+    .map((row) => ({
+      id: row.id,
+      date: row.date,
+      startsAt: row.startsAt,
+      endsAt: row.endsAt,
+      discipline: row.discipline,
+      kind: row.kind,
+      room: row.room,
+      teacher: row.teacher,
+      changeType: row.changeType as LessonView["changeType"],
+      changeNote: row.changeNote,
+      pairNumber: row.pairNumber,
+      flagged: flagged.has(row.id),
+    }));
+  return {
+    today: focus,
+    focus,
+    weekStart: days[0],
+    days: days.map((date) => ({
+      date,
+      weekday: weekdayRu(date),
+      items: items.filter((item) => item.date === date),
+    })),
+    items,
+  };
+}
+
+export async function loadDisciplines(userId: number, semester?: string) {
+  const rows = await getDb()
+    .select()
+    .from(disciplines)
+    .where(semester ? and(eq(disciplines.studentId, userId), eq(disciplines.semester, semester)) : eq(disciplines.studentId, userId))
+    .orderBy(asc(disciplines.name));
+  if (!rows.length) return [];
+  const markRows = await getDb()
+    .select()
+    .from(marks)
+    .where(and(eq(marks.studentId, userId), inArray(marks.disciplineId, rows.map((row) => row.id))))
+    .orderBy(asc(marks.awardedOn));
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    controlForm: row.controlForm as "exam" | "credit",
+    sessionDate: row.sessionDate,
+    obligatoryTotal: row.obligatoryTotal,
+    obligatoryDone: row.obligatoryDone,
+    semester: row.semester,
+    marks: markRows
+      .filter((mark) => mark.disciplineId === row.id)
+      .map((mark) => ({
+        id: mark.id,
+        label: mark.label,
+        value: mark.value,
+        kind: mark.kind as "current" | "exam" | "credit",
+        awardedOn: mark.awardedOn,
+      })),
+  }));
+}
+
+export async function disciplineNames(userId: number) {
+  const rows = await getDb().select({ name: disciplines.name }).from(disciplines).where(eq(disciplines.studentId, userId));
+  return rows.map((row) => row.name);
+}
+
+export async function listOwnRequests(userId: number) {
+  return getDb().select().from(requests).where(eq(requests.studentId, userId)).orderBy(desc(requests.createdAt));
+}
+
+export async function getRequestFor(user: PublicUser, id: number) {
+  const rows = await getDb().select().from(requests).where(eq(requests.id, id)).limit(1);
+  const row = rows[0];
+  if (!row || (user.role !== "staff" && row.studentId !== user.id)) throw notFound("Заявка не найдена");
+  const events = await getDb().select().from(requestEvents).where(eq(requestEvents.requestId, id)).orderBy(asc(requestEvents.createdAt));
+  let student: PublicUser | null = null;
+  if (user.role === "staff") {
+    const owner = await findUserById(row.studentId);
+    student = owner ? toPublic(owner) : null;
+  }
+  return { request: row, events, student };
+}
+
+export async function listNotifications(userId: number) {
+  return getDb().select().from(notifications).where(eq(notifications.userId, userId)).orderBy(desc(notifications.createdAt)).limit(50);
+}
+
+export async function listAudit(userId: number) {
+  await getDb()
+    .update(auditLog)
+    .set({ summary: sql`replace(${auditLog.summary}, 'Ждёт подтверждения', 'Не подтверждено')` })
+    .where(and(eq(auditLog.userId, userId), sql`${auditLog.summary} like 'Ждёт подтверждения%'`, sql`${auditLog.createdAt} < now() - interval '10 minutes'`));
+  return getDb().select().from(auditLog).where(eq(auditLog.userId, userId)).orderBy(desc(auditLog.createdAt)).limit(40);
+}
+
+export async function listReminders(userId: number) {
+  return getDb()
+    .select()
+    .from(reminders)
+    .where(and(eq(reminders.userId, userId), eq(reminders.done, false), gte(reminders.dueAt, new Date(Date.now() - 86_400_000).toISOString())))
+    .orderBy(asc(reminders.dueAt))
+    .limit(8);
+}
+
+export async function listAnnouncements() {
+  return getDb().select().from(announcements).orderBy(desc(announcements.createdAt)).limit(20);
+}
+
+export async function staffInbox() {
+  const rows = await getDb().select().from(requests).orderBy(desc(requests.updatedAt)).limit(100);
+  if (!rows.length) return [];
+  const owners = await getDb()
+    .select()
+    .from(users)
+    .where(inArray(users.id, [...new Set(rows.map((row) => row.studentId))]));
+  const byId = new Map(owners.map((owner) => [owner.id, owner]));
+  return rows.map((row) => ({ row, owner: byId.get(row.studentId) ?? null }));
+}
+
+export async function allStudents() {
+  return getDb().select().from(users).where(eq(users.role, "student"));
+}
+
+export async function allStaff() {
+  return getDb().select().from(users).where(eq(users.role, "staff"));
+}
+
+export function semestersFor(todayISO: string) {
+  const period = academicPeriod(todayISO);
+  return { current: period.current, previous: period.previous, list: [period.current, period.previous] };
+}
+
+export async function changesUntil(user: PublicUser, todayISO: string) {
+  if (!user.groupName) return [];
+  const end = addDays(mondayOf(todayISO), 5);
+  const data = await loadSchedule(user, todayISO, true);
+  return data.items.filter((item) => item.date >= todayISO && item.date <= end && item.changeType !== "none");
+}
+
+export async function touchNow() {
+  return sql`now()`;
+}
+
+export async function unreadCount(userId: number) {
+  const rows = await getDb()
+    .select({ id: notifications.id })
+    .from(notifications)
+    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)));
+  return rows.length;
+}
+
+export { longDay };
