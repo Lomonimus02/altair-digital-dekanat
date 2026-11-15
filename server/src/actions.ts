@@ -953,10 +953,10 @@ async function nextLesson(user: PublicUser, subject: string, showGroup: boolean)
   );
   items.sort((a, b) => a.date.localeCompare(b.date) || a.startsAt.localeCompare(b.startsAt));
   const next = items[0];
-  if (!next) return { summary: `Пары по «${subject}» в ближайшие недели нет.` };
+  if (!next) return { summary: `Пары по дисциплине «${subject}» в ближайшие недели нет.` };
   const where = [showGroup ? next.groupName : null, next.room ? `ауд. ${next.room}` : null].filter(Boolean).join(", ");
   return {
-    summary: `Следующая пара по «${next.discipline}»: ${shortDayDate(next.date)}, ${next.startsAt}–${next.endsAt}${where ? `, ${where}` : ""}.`,
+    summary: `Следующая пара по дисциплине «${next.discipline}»: ${shortDayDate(next.date)}, ${next.startsAt}–${next.endsAt}${where ? `, ${where}` : ""}.`,
     card: { title: next.discipline, rows: [{ label: shortDayDate(next.date), value: `${next.startsAt}–${next.endsAt}${where ? `, ${where}` : ""}` }] },
     ui: [{ type: "navigate", to: `/schedule?date=${next.date}`, highlight: `lesson-${next.id}` }],
   };

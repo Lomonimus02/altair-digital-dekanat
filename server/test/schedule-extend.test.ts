@@ -1,8 +1,9 @@
 import { and, count, eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { formatDdMm, formatWeekSpan, mondayOf, scheduleLook } from "../../shared/src/dates";
+import { formatDdMm, formatWeekSpan, mondayOf, scheduleLook, setClock } from "../../shared/src/dates";
 import { buildApp } from "../src/app";
 import { getDb } from "../src/db/client";
+import { loadSchedule, toPublic } from "../src/loaders";
 import { extendSchedule } from "../src/db/seed-schedule-extend";
 import { seed } from "../src/db/seed";
 import { seedHomework } from "../src/db/seed-homework";
@@ -174,6 +175,36 @@ it("замена аудитории обновляет уже отправлен
   await extendSchedule();
   const [again] = await db.select().from(notifications).where(eq(notifications.id, note.id));
   expect(again.body).toBe(fresh.body);
+  await db.update(notifications).set({ body: `${formatDdMm(row.date)} Программирование: ${oldNote}`, href: `/schedule?date=${row.date}` }).where(eq(notifications.id, note.id));
+  await extendSchedule();
+  const [kept] = await db.select().from(notifications).where(eq(notifications.id, note.id));
+  expect(kept.body).toContain("была 314");
+  expect(kept.body).not.toContain("была 401");
+  expect(kept.href).toContain(`item=${row.id}`);
+});
+
+it("повторный просмотр пары не создаёт второе уведомление", async () => {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(scheduleItems)
+    .where(and(eq(scheduleItems.changeType, "room"), eq(scheduleItems.discipline, "Программирование"), eq(scheduleItems.date, "2026-11-19")));
+  const [sorokin] = await db.select().from(users).where(eq(users.login, "sorokin.mo"));
+  await db.delete(notifications).where(and(eq(notifications.userId, sorokin.id), eq(notifications.title, "Изменение в расписании")));
+  setClock("2026-11-16T12:00:00+03:00");
+  try {
+    await loadSchedule(toPublic(sorokin), "2026-11-19", true);
+    await loadSchedule(toPublic(sorokin), "2026-11-19", true);
+  } finally {
+    setClock(null);
+  }
+  const notes = await db
+    .select()
+    .from(notifications)
+    .where(and(eq(notifications.userId, sorokin.id), eq(notifications.title, "Изменение в расписании")));
+  const mine = notes.filter((note) => note.href?.includes(`item=${row.id}`));
+  expect(mine).toHaveLength(1);
+  expect(mine[0]?.body).toContain("была 314");
 });
 
 it("прошедшая дата не называется ближайшей", () => {

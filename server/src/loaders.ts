@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { academicPeriod, addDays, formatDdMm, longDay, mondayOf, moscowToday, studyWeek, weekdayRu } from "../../shared/src/dates";
 import { addressName, initials, type LessonView, type PublicUser, type Role, type Theme } from "../../shared/src/domain";
 import { getDb } from "./db/client";
@@ -153,13 +153,33 @@ async function notifySoonChanges(userId: number, items: LessonView[]) {
     if (item.changeType === "none" || item.date < today || item.date > until) continue;
     const title = "Изменение в расписании";
     const body = `${formatDdMm(item.date)} ${item.discipline}: ${item.changeNote ?? ""}`.trim();
-    const href = `/schedule?date=${item.date}`;
+    const href = `/schedule?date=${item.date}&item=${item.id}`;
+    const legacy = `${formatDdMm(item.date)} ${item.discipline}:`;
+    const hint = item.changeType === "room" ? "%Аудитория изменена%" : item.changeType === "cancelled" ? "%отмен%" : "%Перенес%";
     const existing = await getDb()
-      .select({ id: notifications.id })
+      .select({ id: notifications.id, body: notifications.body, href: notifications.href })
       .from(notifications)
-      .where(and(eq(notifications.userId, userId), eq(notifications.title, title), eq(notifications.href, href), eq(notifications.body, body)))
+      .where(
+        and(
+          eq(notifications.userId, userId),
+          eq(notifications.title, title),
+          or(
+            sql`${notifications.href} like ${"%item=" + item.id + "%"}`,
+            and(
+              sql`${notifications.href} like ${"%date=" + item.date + "%"}`,
+              sql`${notifications.body} like ${legacy + "%"}`,
+              sql`${notifications.body} like ${hint}`,
+            ),
+          ),
+        ),
+      )
       .limit(1);
-    if (existing[0]) continue;
+    if (existing[0]) {
+      if (existing[0].body !== body || existing[0].href !== href) {
+        await getDb().update(notifications).set({ body, href }).where(eq(notifications.id, existing[0].id));
+      }
+      continue;
+    }
     await getDb().insert(notifications).values({ userId, kind: "schedule", title, body, href });
   }
 }

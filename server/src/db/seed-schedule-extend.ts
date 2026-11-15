@@ -1,4 +1,4 @@
-import { and, asc, eq, ne, sql } from "drizzle-orm";
+import { and, asc, eq, ne, or, sql } from "drizzle-orm";
 import { addDays, formatDdMm, mondayOf, studyWeek, weekdayIndex } from "../../../shared/src/dates";
 import { getDb, getPool } from "./client";
 import { announcements, assignments, notifications, scheduleItems, users } from "./schema";
@@ -199,20 +199,31 @@ async function fixChangeNotes() {
       if (usual) note = roomChangeNote(usual, row.room);
     }
     note = note.replace(/, (\d)\.(\d{2})$/g, (_, day: string, month: string) => `, 0${day}.${month}`);
-    if (note === row.changeNote) continue;
-    await db.update(scheduleItems).set({ changeNote: note }).where(eq(scheduleItems.id, row.id));
-    if (row.changeType !== "room") continue;
-    await db
-      .update(notifications)
-      .set({ body: sql`replace(${notifications.body}, ${row.changeNote}, ${note})` })
-      .where(
-        and(
-          eq(notifications.title, "Изменение в расписании"),
-          sql`${notifications.body} like ${"%" + row.discipline + "%"}`,
-          sql`${notifications.body} like ${"%" + row.changeNote + "%"}`,
-        ),
-      );
+    if (note !== row.changeNote) {
+      await db.update(scheduleItems).set({ changeNote: note }).where(eq(scheduleItems.id, row.id));
+    }
+    if (row.changeType === "room") await syncRoomNotification(row, note);
   }
+}
+
+async function syncRoomNotification(row: { id: number; date: string; discipline: string }, note: string) {
+  const db = getDb();
+  const canonical = `${formatDdMm(row.date)} ${row.discipline}: ${note}`;
+  const href = `/schedule?date=${row.date}&item=${row.id}`;
+  const legacy = `${formatDdMm(row.date)} ${row.discipline}:`;
+  await db
+    .update(notifications)
+    .set({ body: canonical, href })
+    .where(
+      and(
+        eq(notifications.title, "Изменение в расписании"),
+        or(
+          sql`${notifications.href} like ${"%item=" + row.id + "%"}`,
+          and(sql`${notifications.body} like ${legacy + "%"}`, sql`${notifications.body} like ${"%Аудитория изменена%"}`),
+        ),
+        sql`${notifications.body} is distinct from ${canonical}`,
+      ),
+    );
 }
 
 async function unifyLawItTeacher() {

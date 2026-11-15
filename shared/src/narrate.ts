@@ -71,7 +71,8 @@ export function narrateWeekSchedule(items: LessonView[], opts: { label: string; 
   const showGroup = opts.showGroup ?? true;
   if (!items.length) return `${prefix}${opts.label || "В этот день"}: занятий нет.`;
   const lines = grouped(items).map(({ date, lessons }) => `${shortDayDate(date)}: ${lessons.map((lesson) => formatWeekLesson(lesson, showGroup)).join("; ")}`);
-  return `${prefix}${opts.label ? `${opts.label}\n` : ""}${lines.join("\n")}`;
+  const heading = opts.label && !(lines.length === 1 && lines[0].startsWith(opts.label)) ? opts.label : "";
+  return `${prefix}${heading ? `${heading}\n` : ""}${lines.join("\n")}`;
 }
 
 export function weekCardRows(items: LessonView[], showGroup = true): { label: string; value: string }[] {
