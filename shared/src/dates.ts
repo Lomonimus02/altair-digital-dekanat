@@ -68,6 +68,14 @@ export function ruCount(n: number, one: string, few: string, many: string): stri
   return `${n} ${many}`;
 }
 
+/** Как подписать неделю, если в ней нет сегодняшнего дня. */
+export function scheduleLook(today: string, weekStart: string, weekEnd: string): "in-week" | "past" | "near" | "later" {
+  if (today >= weekStart && today <= weekEnd) return "in-week";
+  if (weekEnd < today) return "past";
+  if (daysBetween(today, weekStart) <= 7) return "near";
+  return "later";
+}
+
 export function daysBetween(fromISO: string, toISO: string): number {
   const a = Date.parse(`${fromISO}T00:00:00Z`);
   const b = Date.parse(`${toISO}T00:00:00Z`);

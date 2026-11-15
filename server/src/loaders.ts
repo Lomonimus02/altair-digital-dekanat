@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
-import { academicPeriod, addDays, longDay, mondayOf, studyWeek, weekdayRu } from "../../shared/src/dates";
+import { academicPeriod, addDays, longDay, mondayOf, moscowToday, studyWeek, weekdayRu } from "../../shared/src/dates";
 import { addressName, initials, type LessonView, type PublicUser, type Role, type Theme } from "../../shared/src/domain";
 import { getDb } from "./db/client";
 import {
@@ -79,6 +79,7 @@ export async function loadSchedule(user: PublicUser, focus: string, includeCance
       pairNumber: row.pairNumber,
       flagged: flagged.has(row.id),
     }));
+  await notifySoonChanges(user.id, items);
   return {
     today: focus,
     focus,
@@ -90,6 +91,24 @@ export async function loadSchedule(user: PublicUser, focus: string, includeCance
     })),
     items,
   };
+}
+
+async function notifySoonChanges(userId: number, items: LessonView[]) {
+  const today = moscowToday();
+  const until = addDays(today, 7);
+  for (const item of items) {
+    if (item.changeType === "none" || item.date < today || item.date > until) continue;
+    const title = "Изменение в расписании";
+    const body = `${item.date.slice(8)}.${item.date.slice(5, 7)} ${item.discipline}: ${item.changeNote ?? ""}`.trim();
+    const href = `/schedule?date=${item.date}`;
+    const existing = await getDb()
+      .select({ id: notifications.id })
+      .from(notifications)
+      .where(and(eq(notifications.userId, userId), eq(notifications.title, title), eq(notifications.href, href), eq(notifications.body, body)))
+      .limit(1);
+    if (existing[0]) continue;
+    await getDb().insert(notifications).values({ userId, kind: "schedule", title, body, href });
+  }
 }
 
 export async function loadDisciplines(userId: number, semester?: string) {

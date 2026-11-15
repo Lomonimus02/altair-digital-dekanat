@@ -8,7 +8,7 @@
     "dev:api": "tsx watch server/src/index.ts",
     "dev:web": "vite --config client/vite.config.ts",
     "build": "vite build --config client/vite.config.ts && npm run build:api",
-    "build:api": "esbuild server/src/index.ts --bundle --platform=node --target=node22 --outfile=server/dist/index.js --packages=external --format=esm && esbuild server/src/db/migrate.ts --bundle --platform=node --target=node22 --outfile=server/dist/migrate.js --packages=external --format=esm && esbuild server/src/db/seed.ts --bundle --platform=node --target=node22 --outfile=server/dist/seed.js --packages=external --format=esm && esbuild server/src/db/seed-homework.ts --bundle --platform=node --target=node22 --outfile=server/dist/seed-homework.js --packages=external --format=esm",
+    "build:api": "esbuild server/src/index.ts --bundle --platform=node --target=node22 --outfile=server/dist/index.js --packages=external --format=esm && esbuild server/src/db/migrate.ts --bundle --platform=node --target=node22 --outfile=server/dist/migrate.js --packages=external --format=esm && esbuild server/src/db/seed.ts --bundle --platform=node --target=node22 --outfile=server/dist/seed.js --packages=external --format=esm && esbuild server/src/db/seed-homework.ts --bundle --platform=node --target=node22 --outfile=server/dist/seed-homework.js --packages=external --format=esm && esbuild server/src/db/seed-schedule-extend.ts --bundle --platform=node --target=node22 --outfile=server/dist/seed-schedule-extend.js --packages=external --format=esm",
     "start": "NODE_ENV=production node --env-file-if-exists=.env server/dist/index.js",
     "migrate": "node --env-file-if-exists=.env server/dist/migrate.js",
     "seed": "node --env-file-if-exists=.env server/dist/seed.js",
@@ -18,6 +18,8 @@
     "seed:classmates": "node --env-file-if-exists=.env server/dist/seed-homework.js --classmates",
     "db:seed:classmates": "tsx server/src/db/seed-homework.ts --classmates",
     "db:seed:homework": "tsx server/src/db/seed-homework.ts",
+    "seed:schedule-extend": "node --env-file-if-exists=.env server/dist/seed-schedule-extend.js",
+    "db:seed:schedule-extend": "tsx server/src/db/seed-schedule-extend.ts",
     "test": "vitest run",
     "typecheck": "tsc -p server/tsconfig.json --noEmit && tsc -p client/tsconfig.json --noEmit"
   },

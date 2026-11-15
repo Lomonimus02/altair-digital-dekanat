@@ -117,7 +117,7 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
         <nav className="liquid-glass min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-2" aria-label="Разделы">
           <div className="glass-pad space-y-1">
             {links.map((link) => (
-              <SideLink key={link.to} {...link} />
+              <SideLink key={link.to} {...link} ariaLabel={link.to === "/notifications" ? unreadLabel(unread) : undefined} />
             ))}
           </div>
         </nav>
@@ -137,7 +137,7 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
           <Brand compact />
           <div className="flex items-center gap-2">
             <ThemeButton />
-            <NavLink to="/notifications" className="btn btn-glass relative h-11 w-11 px-0" aria-label="Уведомления">
+            <NavLink to="/notifications" className="btn btn-glass relative h-11 w-11 px-0" aria-label={unreadLabel(unread)}>
               <Bell className="h-5 w-5" />
               {unread ? <span className="absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[var(--primary)] px-1 text-[10px] text-[var(--primary-ink)]">{unread}</span> : null}
             </NavLink>
@@ -303,14 +303,20 @@ function Brand({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function SideLink({ to, label, icon: Icon, end, badge }: { to: string; label: string; icon: typeof House; end?: boolean; badge?: number }) {
+function unreadLabel(unread: number) {
+  if (!unread) return "Уведомления";
+  const word = unread % 10 === 1 && unread % 100 !== 11 ? "непрочитанное" : "непрочитанных";
+  return `Уведомления, ${unread} ${word}`;
+}
+
+function SideLink({ to, label, icon: Icon, end, badge, ariaLabel }: { to: string; label: string; icon: typeof House; end?: boolean; badge?: number; ariaLabel?: string }) {
   const [tip, setTip] = useState<number | null>(null);
   return (
     <NavLink
       to={to}
       end={end}
       title={label}
-      aria-label={label}
+      aria-label={ariaLabel ?? label}
       className="group relative flex h-11 w-11 items-center justify-center gap-2 rounded-2xl text-sm xl:w-full xl:justify-start xl:px-3"
       onMouseEnter={(event) => setTip(event.currentTarget.getBoundingClientRect().top + 6)}
       onMouseLeave={() => setTip(null)}

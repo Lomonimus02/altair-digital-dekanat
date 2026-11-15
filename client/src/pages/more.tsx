@@ -48,7 +48,7 @@ export function ProfilePage() {
   if (!user) return null;
   const rows = [
     ["ФИО", user.fullName],
-    ["Институт", user.institute],
+    ["Факультет / институт", user.institute],
     ["Направление", user.direction],
     ["Курс", user.course ? String(user.course) : null],
     ["Группа", user.groupName],
@@ -168,7 +168,7 @@ export function VerifyPage() {
               <p>Действительна. Сведения совпадают с бланком и не содержат оценок или номера зачётки.</p>
               <dl className="space-y-1 text-sm">
                 <Row label="Студент" value={check.data.studentName} />
-                <Row label="Институт" value={check.data.institute} />
+                <Row label="Факультет / институт" value={check.data.institute} />
                 <Row label="Направление" value={check.data.direction} />
                 <Row label="Курс" value={check.data.course ? String(check.data.course) : null} />
                 <Row label="Группа" value={check.data.group} />

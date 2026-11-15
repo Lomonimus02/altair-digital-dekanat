@@ -73,6 +73,7 @@ npm install
 npm run db:migrate
 npm run db:seed
 npm run db:seed:homework
+npm run db:seed:schedule-extend
 npm run dev
 ```
 

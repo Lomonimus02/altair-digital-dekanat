@@ -1,5 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { CHANGE_LABEL, KIND_LABEL, type LessonView } from "@shared/domain";
+import { scheduleLook } from "@shared/dates";
 import { Star } from "lucide-react";
 import { useRef } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -55,14 +56,18 @@ export function SchedulePage() {
     }
   };
 
-  const weekend = !schedule.data.days.some((day) => day.date === schedule.data.today);
+  const weekStart = schedule.data.days[0]?.date ?? focus;
+  const weekEnd = schedule.data.days.at(-1)?.date ?? focus;
+  const look = scheduleLook(schedule.data.today, weekStart, weekEnd);
   const focusDay = schedule.data.days[index];
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <h1>Расписание</h1>
-          {weekend && focusDay ? <p className="text-sm text-[var(--muted)]">Сегодня пар нет — ближайшие: {shortDay(focusDay.weekday).toLowerCase()} {focusDay.date.slice(8)}.{focusDay.date.slice(5, 7)}</p> : null}
+          {look === "near" && focusDay ? <p className="text-sm text-[var(--muted)]">Сегодня пар нет — ближайшие: {shortDay(focusDay.weekday).toLowerCase()} {focusDay.date.slice(8)}.{focusDay.date.slice(5, 7)}</p> : null}
+          {look === "past" && focusDay ? <p className="text-sm text-[var(--muted)]">Прошедшая неделя: {shortDay(focusDay.weekday).toLowerCase()} {focusDay.date.slice(8)}.{focusDay.date.slice(5, 7)}</p> : null}
+          {look === "later" && focusDay ? <p className="text-sm text-[var(--muted)]">Вы смотрите {shortDay(focusDay.weekday).toLowerCase()} {focusDay.date.slice(8)}.{focusDay.date.slice(5, 7)}</p> : null}
         </div>
         <div className="hidden items-center gap-2 xl:flex">
           <button className="btn btn-glass h-11 px-4" onClick={() => shift(-7)}>Предыдущая неделя</button>

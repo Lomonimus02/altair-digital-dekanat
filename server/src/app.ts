@@ -455,12 +455,27 @@ export async function buildApp() {
   });
 
   if (serveStatic) {
-    await app.register(fastifyStatic, { root: clientDist, wildcard: false });
+    await app.register(fastifyStatic, {
+      root: clientDist,
+      wildcard: false,
+      setHeaders(reply, filePath) {
+        if (filePath.endsWith(`${path.sep}index.html`)) {
+          reply.header("Cache-Control", "no-cache");
+          return;
+        }
+        if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          reply.header("Cache-Control", "public, max-age=31536000, immutable");
+        }
+      },
+    });
   }
 
   app.setNotFoundHandler((request, reply) => {
     if (request.url.startsWith("/api")) return reply.code(404).type("application/json").send({ error: "not_found", message: "Маршрут не найден" });
-    if (serveStatic && (request.method === "GET" || request.method === "HEAD")) return reply.sendFile("index.html");
+    if (serveStatic && (request.method === "GET" || request.method === "HEAD")) {
+      reply.header("Cache-Control", "no-cache");
+      return reply.sendFile("index.html");
+    }
     return reply.code(404).send({ error: "not_found", message: "Маршрут не найден" });
   });
 
