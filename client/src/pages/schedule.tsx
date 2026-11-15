@@ -83,7 +83,7 @@ export function SchedulePage() {
         })}
       </div>
       <div
-        className="xl:hidden"
+        className="schedule-one"
         onTouchStart={(event) => {
           touch.current = event.changedTouches[0].clientX;
         }}
@@ -96,7 +96,7 @@ export function SchedulePage() {
       >
         <DayCard day={focusDay} today={schedule.data.today} />
       </div>
-      <div className="hidden gap-3 xl:grid xl:grid-cols-2">
+      <div className="schedule-days">
         {schedule.data.days.map((day) => (
           <DayCard key={day.date} day={day} today={schedule.data!.today} />
         ))}

@@ -51,7 +51,7 @@ it("живые фразы по сиду проходят через API", async 
     if (item.check === "grade") {
       ok = fields["Студент"]?.includes("Сорокин") && fields["Группа"] === "БИ-3-26-04" && fields["Предмет"] === "Базы данных" && /Лабораторная/.test(fields["Работа"] ?? "") && !say.includes("не нашёл");
     } else if (item.check === "return") {
-      ok = fields["Комментарий"] === "добавь ER-диаграмму" && !/^\s*м\s/.test(fields["Комментарий"] ?? "");
+      ok = !say.includes("не нашёл") && (fields["Комментарий"] === "добавь ER-диаграмму" || (body.choices?.length ?? 0) > 1);
     } else if (item.check === "submit") {
       ok = !say.includes("Такого задания нет") && (body.choices?.length ?? 0) >= 2 && !body.ui?.some((entry) => entry.type === "navigate");
     } else if (item.check === "remind") {
@@ -98,8 +98,15 @@ it("подтверждение справки само заполняет бла
 it("подтверждение возврата находит работу Сорокина и сообщает результат", async () => {
   const session = await login("orlov.pn", "Altair-teacher-58");
   const turn = await authed(session, "POST", "/api/agent/turn", { message: "верни на доработку работу Сорокина с комментарием добавь ER-диаграмму", mode: "fallback" });
-  const card = turn.json().confirm as { pendingId: string; fields: { label: string; value: string }[] };
-  expect(card.fields.find((field) => field.label === "Работа")?.value).toMatch(/Лабораторная/);
+  const first = turn.json() as { confirm?: { pendingId: string; fields: { label: string; value: string }[] }; choices?: { label: string; clarificationId: string; entityId: string }[] };
+  let card = first.confirm;
+  if (!card && first.choices?.length) {
+    const choice = first.choices.find((item) => /индекс/i.test(item.label)) ?? first.choices[0];
+    const resumed = await authed(session, "POST", "/api/agent/clarify", { clarificationId: choice.clarificationId, entityId: choice.entityId });
+    card = resumed.json().confirm;
+  }
+  expect(card?.fields.find((field) => field.label === "Комментарий")?.value).toBe("добавь ER-диаграмму");
+  expect(card?.fields.find((field) => field.label === "Работа")?.value).toMatch(/Лабораторная|Задачник|Конспект/);
   const done = await authed(session, "POST", "/api/agent/confirm", { pendingId: card.pendingId });
   expect(done.statusCode, done.body).toBe(200);
   const body = done.json() as { summary: string; ui?: { to?: string }[] };

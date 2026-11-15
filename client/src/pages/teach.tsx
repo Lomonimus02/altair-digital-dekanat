@@ -27,7 +27,7 @@ export function TeachHome() {
           <Link className="inline-flex min-h-11 items-center px-2" to="/teach/homework">Все</Link>
         </div>
         {home.data.review.length ? home.data.review.map((row) => (
-          <Link key={`${row.assignmentId}-${row.studentName}`} to={`/teach/homework/${row.assignmentId}`} className="block min-h-11 border-t border-white/40 py-2 text-sm">
+          <Link key={`${row.assignmentId}-${row.studentName}`} to={`/teach/homework/${row.assignmentId}`} className="block min-h-11 whitespace-normal border-t border-white/40 py-2 text-sm">
             <span className="font-semibold">{row.title}</span>
             <span className="text-[var(--muted)]"> · {row.studentName}, {row.groupName}</span>
           </Link>
@@ -99,25 +99,25 @@ export function TeachJournal() {
           </Glass>
         ))}
       </div>
-      <div className="hidden w-full md:block">
-        <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
+      <div className="hidden w-full min-w-0 overflow-x-auto md:block">
+        <table className="w-full min-w-[44rem] border-separate border-spacing-0 text-sm">
           <thead>
             <tr>
-              <th className="sticky left-0 z-10 w-[28%] bg-[#f4fff8] px-3 py-2 text-left dark:bg-[#10182c]">Студент</th>
-              <th className="w-[16%] px-3 py-2 text-left">{attendanceLabel(journal.data?.studyDate)}</th>
-              <th className="px-3 py-2 text-left">Поставить</th>
-              <th className="px-3 py-2 text-left">Уже стоит</th>
+              <th className="sticky left-0 z-10 w-[22%] bg-[#f4fff8] px-3 py-2 text-left dark:bg-[#10182c]">Студент</th>
+              <th className="w-[14%] px-3 py-2 text-left">{attendanceLabel(journal.data?.studyDate)}</th>
+              <th className="w-[40%] px-3 py-2 text-left">Поставить</th>
+              <th className="w-[24%] px-3 py-2 text-left">Уже стоит</th>
             </tr>
           </thead>
           <tbody>
             {journal.data?.students.map((student) => (
               <tr key={student.name} className="border-t border-white/40" data-agent-target={`journal-${student.name}`}>
-                <th className="sticky left-0 z-10 whitespace-nowrap bg-[#f4fff8] px-3 py-2 text-left font-semibold dark:bg-[#10182c]">{student.name}</th>
+                <th className="sticky left-0 z-10 whitespace-normal bg-[#f4fff8] px-3 py-2 text-left font-semibold dark:bg-[#10182c]">{student.name}</th>
                 <td className="px-3 py-2">
                   <AttendanceButton student={student} studyDate={journal.data?.studyDate} group={activeGroup} discipline={activeDiscipline} onDone={() => void journal.refetch()} />
                 </td>
                 <td className="px-3 py-2">
-                  <GradeChips student={student} group={activeGroup} discipline={activeDiscipline} onDone={() => void journal.refetch()} />
+                  <GradeChips compact student={student} group={activeGroup} discipline={activeDiscipline} onDone={() => void journal.refetch()} />
                 </td>
                 <td className="whitespace-normal px-3 py-2 text-[var(--muted)]">{marksText(student.marks)}</td>
               </tr>
@@ -164,12 +164,10 @@ export function TeachQueue() {
 
 export function TeachAssignment() {
   const { id = "" } = useParams();
-  const run = useAction();
   const detail = useQuery({
     queryKey: ["teach-assignment", id],
     queryFn: () => api<{ assignment: { id: number; title: string; description: string; groupName: string; discipline: string; students: { name: string; submission: { statusLabel: string; body: string; status: string; score: number | null; teacherComment: string | null } }[] } }>(`/api/teach/homework/${id}`),
   });
-  const [comment, setComment] = useState("Нужно поправить и прислать снова.");
   const [error, setError] = useState("");
   if (detail.isLoading) return <LoadingBlock />;
   if (detail.error || !detail.data) return <ErrorState text="Задание не найдено" />;
@@ -181,37 +179,54 @@ export function TeachAssignment() {
       <p className="text-sm text-[var(--muted)]">{assignment.groupName} · {assignment.discipline}</p>
       <Glass><p className="text-sm">{assignment.description}</p></Glass>
       {assignment.students.map((student) => (
-        <Glass key={student.name} target={`student-${student.name}`}>
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-base font-semibold">{student.name}</h2>
-            <Pill>{student.submission.statusLabel}</Pill>
-          </div>
-          {student.submission.body ? <p className="mt-2 text-sm">{student.submission.body}</p> : null}
-          {student.submission.teacherComment ? <p className="mt-2 text-sm"><span className="font-semibold">Комментарий. </span>{student.submission.teacherComment}</p> : null}
-          {student.submission.status === "returned" ? (
-            <form className="mt-3 space-y-2" onSubmit={(event) => { event.preventDefault(); void run("teacher_return_homework", { assignmentId: assignment.id, studentName: student.name, comment }).then(() => detail.refetch()).catch((err: Error) => setError(err.message)); }}>
-              <label className="block text-sm font-semibold">Исправить комментарий<textarea className="field mt-1 min-h-16 py-3" value={comment} onChange={(event) => setComment(event.target.value)} /></label>
-              <Button variant="glass" className="h-11 px-4">Сохранить комментарий</Button>
-            </form>
-          ) : null}
-          {student.submission.status === "graded" ? <p className="mt-2 text-sm">Оценка {student.submission.score}</p> : student.submission.status === "not_started" ? <p className="mt-2 text-sm text-[var(--muted)]">Не начато — ставить оценку рано.</p> : (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {[2, 3, 4, 5].map((score) => (
-                <Button key={score} className="h-11 w-11 px-0" onClick={() => void run("teacher_grade_homework", { assignmentId: assignment.id, studentName: student.name, score }).then(() => detail.refetch()).catch((err: Error) => setError(err.message))}>{score}</Button>
-              ))}
-              <Button variant="glass" className="h-11 px-3" onClick={() => void run("teacher_grade_homework", { assignmentId: assignment.id, studentName: student.name, score: 1 }).then(() => detail.refetch()).catch((err: Error) => setError(err.message))}>зачёт</Button>
-              <Button variant="glass" className="h-11 px-3" onClick={() => void run("teacher_grade_homework", { assignmentId: assignment.id, studentName: student.name, score: 0 }).then(() => detail.refetch()).catch((err: Error) => setError(err.message))}>незачёт</Button>
-              <Button variant="glass" className="h-11 px-4" onClick={() => void run("teacher_return_homework", { assignmentId: assignment.id, studentName: student.name, comment }).then(() => detail.refetch()).catch((err: Error) => setError(err.message))}>Вернуть</Button>
-            </div>
-          )}
-        </Glass>
+        <StudentReview key={student.name} student={student} assignmentId={assignment.id} onError={setError} onSaved={() => void detail.refetch()} />
       ))}
-      <label className="block text-sm">
-        Комментарий к возврату
-        <textarea className="field mt-1 min-h-20 py-3" value={comment} onChange={(event) => setComment(event.target.value)} />
-      </label>
       {error ? <p className="text-sm text-[var(--risk-high-fg)]">{error}</p> : null}
     </div>
+  );
+}
+
+function StudentReview({
+  student,
+  assignmentId,
+  onError,
+  onSaved,
+}: {
+  student: { name: string; submission: { statusLabel: string; body: string; status: string; score: number | null; teacherComment: string | null } };
+  assignmentId: number;
+  onError: (message: string) => void;
+  onSaved: () => void;
+}) {
+  const run = useAction();
+  const [comment, setComment] = useState(student.submission.teacherComment || "Нужно поправить и прислать снова.");
+  useEffect(() => {
+    if (student.submission.teacherComment) setComment(student.submission.teacherComment);
+  }, [student.submission.teacherComment]);
+  return (
+    <Glass target={`student-${student.name}`}>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-base font-semibold">{student.name}</h2>
+        <Pill>{student.submission.statusLabel}</Pill>
+      </div>
+      {student.submission.body ? <p className="mt-2 text-sm">{student.submission.body}</p> : null}
+      {student.submission.teacherComment ? <p className="mt-2 text-sm"><span className="font-semibold">Комментарий. </span>{student.submission.teacherComment}</p> : null}
+      {student.submission.status === "returned" ? (
+        <form className="mt-3 space-y-2" onSubmit={(event) => { event.preventDefault(); void run("teacher_return_homework", { assignmentId, studentName: student.name, comment }).then(onSaved).catch((err: Error) => onError(err.message)); }}>
+          <label className="block text-sm font-semibold">Исправить комментарий<textarea className="field mt-1 min-h-16 py-3" value={comment} onChange={(event) => setComment(event.target.value)} /></label>
+          <Button variant="glass" className="h-11 px-4">Сохранить комментарий</Button>
+        </form>
+      ) : null}
+      {student.submission.status === "graded" ? <p className="mt-2 text-sm">Оценка {student.submission.score}</p> : student.submission.status === "not_started" ? <p className="mt-2 text-sm text-[var(--muted)]">Не начато — ставить оценку рано.</p> : student.submission.status === "returned" ? null : (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {[2, 3, 4, 5].map((score) => (
+            <Button key={score} className="h-11 w-11 px-0" onClick={() => void run("teacher_grade_homework", { assignmentId, studentName: student.name, score }).then(onSaved).catch((err: Error) => onError(err.message))}>{score}</Button>
+          ))}
+          <Button variant="glass" className="h-11 px-3" onClick={() => void run("teacher_grade_homework", { assignmentId, studentName: student.name, score: 1 }).then(onSaved).catch((err: Error) => onError(err.message))}>зачёт</Button>
+          <Button variant="glass" className="h-11 px-3" onClick={() => void run("teacher_grade_homework", { assignmentId, studentName: student.name, score: 0 }).then(onSaved).catch((err: Error) => onError(err.message))}>незачёт</Button>
+          <Button variant="glass" className="h-11 px-4" onClick={() => void run("teacher_return_homework", { assignmentId, studentName: student.name, comment }).then(onSaved).catch((err: Error) => onError(err.message))}>Вернуть</Button>
+        </div>
+      )}
+    </Glass>
   );
 }
 
@@ -279,7 +294,7 @@ function AttendanceButton({ student, studyDate, group, discipline, onDone }: { s
   );
 }
 
-function GradeChips({ student, group, discipline, onDone }: { student: JournalStudent; group: string; discipline: string; onDone: () => void }) {
+function GradeChips({ student, group, discipline, onDone, compact = false }: { student: JournalStudent; group: string; discipline: string; onDone: () => void; compact?: boolean }) {
   const run = useAction();
   const put = (value: number, label: string, kind: "current" | "credit") => void run("teacher_set_mark", { groupName: group, discipline, studentName: student.name, value, label, kind }).then(onDone);
   const chips = [
@@ -288,9 +303,9 @@ function GradeChips({ student, group, discipline, onDone }: { student: JournalSt
     { value: 0, label: "нез.", kind: "credit" as const, mark: "Незачёт" },
   ];
   return (
-    <div className="mt-2 grid grid-cols-6 gap-1 md:flex md:flex-nowrap">
+    <div className={compact ? "flex flex-nowrap gap-1" : "mt-2 grid grid-cols-6 gap-1"}>
       {chips.map((chip) => (
-        <button key={chip.label} type="button" className="grade-chip" aria-label={`${chip.mark} для ${student.name}`} onClick={() => put(chip.value, chip.mark, chip.kind)}>{chip.label}</button>
+        <button key={chip.label} type="button" className={compact ? "grade-chip grade-chip-compact" : "grade-chip"} aria-label={`${chip.mark} для ${student.name}`} onClick={() => put(chip.value, chip.mark, chip.kind)}>{chip.label}</button>
       ))}
     </div>
   );

@@ -51,7 +51,7 @@ export function App() {
         </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
-      <Toaster position="top-center" />
+      <Toaster position="bottom-right" offset={16} mobileOffset={{ bottom: "calc(5.5rem + env(safe-area-inset-bottom))" }} />
     </>
   );
 }

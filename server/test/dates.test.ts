@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { nearestStudyDay, resolveWhen, setClock, studyWeek, weekdayIndex } from "../../shared/src/dates";
+import { longDay, nearestStudyDay, resolveWhen, setClock, studyWeek, weekdayIndex } from "../../shared/src/dates";
 
 afterEach(() => setClock(null));
 
@@ -30,6 +30,10 @@ it("воскресенье открывает следующую учебную 
   expect(resolveWhen("today", "2026-11-15").focus).toBe("2026-11-16");
   expect(resolveWhen("today", "2026-11-13")).toMatchObject({ focus: "2026-11-13", label: "Сегодня" });
   expect(resolveWhen("tomorrow", "2026-11-13").focus).toBe("2026-11-14");
+});
+
+it("после запятой день недели со строчной", () => {
+  expect(longDay("2026-11-15", true)).toMatch(/^воскресенье,/);
 });
 
 it("часы воскресенья по Москве", () => {

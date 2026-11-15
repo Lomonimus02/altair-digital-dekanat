@@ -43,6 +43,19 @@ WHERE s.assignment_id = a.id
   AND s.teacher_comment LIKE 'м %';
 ```
 
+Отменённые напоминания могли оставить уведомления «Сдать «…»». Удалить те, для которых живого напоминания уже нет:
+
+```sql
+DELETE FROM notifications AS n
+WHERE n.kind = 'reminder'
+  AND NOT EXISTS (
+    SELECT 1 FROM reminders AS r
+    WHERE r.user_id = n.user_id
+      AND r.title = n.title
+      AND r.done = false
+  );
+```
+
 Порт и адрес:
 
 - `PORT` — порт процесса. В архиве по умолчанию `4317`.

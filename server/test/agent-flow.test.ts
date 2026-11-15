@@ -93,6 +93,35 @@ it("журнал открывается с группой и предметом,
   expect(reminder.say.startsWith("Напомню") || reminder.say.includes("Сдать")).toBe(true);
 });
 
+it("ER в комментарии не мешает вернуть работу Громова", async () => {
+  const teacher = await login("orlov.pn", "Altair-teacher-58");
+  const body = await turn(teacher, "верни на доработку работу Громова с комментарием добавь ER-диаграмму");
+  expect(body.say).not.toContain("не нашёл");
+  const comment = body.confirm?.fields.find((field) => field.label === "Комментарий")?.value;
+  const student = body.confirm?.fields.find((field) => field.label === "Студент")?.value;
+  expect(comment).toBe("добавь ER-диаграмму");
+  expect(student).toMatch(/Громов/);
+});
+
+it("подтверждение заменяет карточку в журнале, повторное напоминание не плодит уведомления", async () => {
+  const teacher = await login("orlov.pn", "Altair-teacher-58");
+  const prepared = await turn(teacher, "поставь 5 Сорокину за лабу");
+  expect(prepared.confirm?.pendingId).toBeTruthy();
+  await confirm(teacher, prepared.confirm!.pendingId);
+  const audit = await authed(teacher, "GET", "/api/audit");
+  const events = audit.json().events as { summary: string; action: string }[];
+  expect(events.some((event) => event.action === "teacher_grade_homework" && event.summary.startsWith("Ждёт подтверждения"))).toBe(false);
+  expect(events.filter((event) => event.action === "teacher_grade_homework")).toHaveLength(1);
+
+  const student = await login("sorokin.mo", "Altair-student-31");
+  await turn(student, "напомни о дедлайне по базам данных");
+  const again = await turn(student, "напомни о дедлайне по базам данных");
+  expect(again.say).toMatch(/уже стоит/);
+  const notes = await authed(student, "GET", "/api/notifications");
+  const reminders = (notes.json().notifications as { kind: string; title: string }[]).filter((note) => note.kind === "reminder" && note.title.startsWith("Сдать"));
+  expect(reminders).toHaveLength(1);
+});
+
 it("в воскресенье расписание и пары преподавателя смотрят на ближайший понедельник", async () => {
   setClock("2026-11-15T09:00:00+03:00");
   const student = await login("sorokin.mo", "Altair-student-31");

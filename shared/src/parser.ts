@@ -188,8 +188,9 @@ function parseTeacher(t: string, raw: string): Proposal | null {
   const grade = t.match(/поставь\s*([2-5]).{0,40}?([а-яё]{4,})/i) || t.match(/([а-яё]{4,}).{0,20}?(?:оценк\S*|поставь)\s*([2-5])/i);
   if (/доработ/.test(t) && /верн/.test(t)) {
     const comment = extractComment(raw);
-    const name = t.match(/работ[уы]\s+([а-яё]{4,})/)?.[1] ?? t.match(/(сорокин\w*|волков\w*)/)?.[1] ?? "студент";
-    const query = /лаб|ер-диаграмм|er-диаграмм|индекс/.test(t) ? "лаб" : "";
+    const bare = norm(raw.replace(/\s*(?:,)?\s*(?:с\s+комментарием|комментарий|коммент(?:арий|ом)?)\s*[:\-—]?[\s\S]*$/i, ""));
+    const name = bare.match(/работ[уы]\s+([а-яё]{4,})/)?.[1] ?? bare.match(/(сорокин\w*|волков\w*|громов\w*)/)?.[1] ?? "студент";
+    const query = /лаб|индекс/.test(bare) ? "лаб" : "";
     return step("Готовлю возврат на доработку.", "teacher_return_homework", { studentName: name, query, comment });
   }
   if (/отсутств/.test(t)) {

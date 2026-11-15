@@ -19,6 +19,13 @@ it("комментарий к возврату не теряет первую б
   }
 });
 
+it("ER в комментарии не становится типом работы", () => {
+  const parsed = parseIntent("верни на доработку работу Громова с комментарием добавь ER-диаграмму", "teacher");
+  expect(parsed.steps[0]?.args.comment).toBe("добавь ER-диаграмму");
+  expect(parsed.steps[0]?.args.query).toBe("");
+  expect(String(parsed.steps[0]?.args.studentName)).toMatch(/громов/i);
+});
+
 it("числительные занятий", () => {
   expect(ruCount(1, "занятие", "занятия", "занятий")).toBe("1 занятие");
   expect(ruCount(3, "занятие", "занятия", "занятий")).toBe("3 занятия");

@@ -38,6 +38,7 @@ import {
   submissions,
   users,
   announcements,
+  assignments,
   clarifications,
 } from "./db/schema";
 import { publish } from "./hub";
@@ -215,15 +216,34 @@ export async function perform(
   const shouldLog = ctx.source === "agent" || def.risk !== "read";
   let auditId: number | undefined;
   if (shouldLog) {
-    auditId = await writeAudit(
-      user,
-      ctx.source === "agent" ? "agent" : user.role === "staff" ? "staff" : "ui",
-      def.name,
-      args,
-      outcome.summary || stepLabel(def.name, args),
-      Boolean(outcome.reversible),
-      outcome.reversible?.undo ?? null,
-    );
+    const summary = outcome.summary || stepLabel(def.name, args);
+    const reversible = Boolean(outcome.reversible);
+    const undo = outcome.reversible?.undo ?? null;
+    const waiting = ctx.source === "agent" && ctx.confirmed
+      ? (await getDb()
+          .select({ id: auditLog.id })
+          .from(auditLog)
+          .where(and(eq(auditLog.userId, user.id), eq(auditLog.action, def.name), sql`${auditLog.summary} like 'Ждёт подтверждения%'`))
+          .orderBy(desc(auditLog.createdAt))
+          .limit(1))[0]
+      : undefined;
+    if (waiting) {
+      await getDb()
+        .update(auditLog)
+        .set({ summary, reversible, undo, args })
+        .where(eq(auditLog.id, waiting.id));
+      auditId = waiting.id;
+    } else {
+      auditId = await writeAudit(
+        user,
+        ctx.source === "agent" ? "agent" : user.role === "staff" ? "staff" : "ui",
+        def.name,
+        args,
+        summary,
+        reversible,
+        undo,
+      );
+    }
   }
   console.info(JSON.stringify({ tool: def.name, userId: user.id, role: user.role, source: ctx.source }));
   return {
@@ -819,8 +839,12 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
     return { summary: result.summary, ui: [{ type: "navigate", to: `/teach/homework/${result.id}`, highlight: "queue" }, { type: "invalidate", keys: ["homework"] }] };
   },
   async teacher_return_homework(user, args) {
-    const summary = await returnSubmission(user, Number(args.assignmentId), String(args.studentName), String(args.comment));
-    return { summary, ui: [{ type: "invalidate", keys: ["homework"] }, { type: "navigate", to: `/teach/homework/${args.assignmentId}`, highlight: `student-${args.studentName}` }] };
+    const returned = await returnSubmission(user, Number(args.assignmentId), String(args.studentName), String(args.comment));
+    return {
+      summary: returned.summary,
+      ui: [{ type: "invalidate", keys: ["homework"] }, { type: "navigate", to: `/teach/homework/${args.assignmentId}`, highlight: `student-${args.studentName}` }],
+      reversible: { undo: returned.undo },
+    };
   },
   async teacher_grade_homework(user, args) {
     const graded = await gradeSubmission(user, Number(args.assignmentId), String(args.studentName), Number(args.score), args.comment ? String(args.comment) : undefined);
@@ -941,12 +965,27 @@ async function undoAudit(user: PublicUser, auditId: number): Promise<Outcome> {
         .where(and(eq(notifications.id, item.id), eq(notifications.userId, user.id)));
     }
   } else if (undo.type === "reminder") {
+    const [reminder] = await getDb().select().from(reminders).where(and(eq(reminders.id, undo.id), eq(reminders.userId, user.id))).limit(1);
     await getDb().delete(reminders).where(and(eq(reminders.id, undo.id), eq(reminders.userId, user.id)));
+    if (reminder) {
+      await getDb().delete(notifications).where(and(eq(notifications.userId, user.id), eq(notifications.kind, "reminder"), eq(notifications.title, reminder.title)));
+    }
   } else if (undo.type === "mark") {
     await getDb().delete(marks).where(eq(marks.id, undo.markId));
   } else if (undo.type === "submission") {
     if (undo.markId) await getDb().delete(marks).where(eq(marks.id, undo.markId));
     if (undo.submissionId) {
+      const [submission] = await getDb().select().from(submissions).where(eq(submissions.id, undo.submissionId)).limit(1);
+      if (submission) {
+        const [assignment] = await getDb().select().from(assignments).where(eq(assignments.id, submission.assignmentId)).limit(1);
+        if (assignment) {
+          await getDb().delete(notifications).where(and(
+            eq(notifications.userId, submission.studentId),
+            eq(notifications.kind, "homework"),
+            eq(notifications.title, `Вернули на доработку: ${assignment.title}`),
+          ));
+        }
+      }
       await getDb()
         .update(submissions)
         .set({ status: undo.previousStatus, score: undo.previousScore, teacherComment: undo.previousComment })
@@ -962,7 +1001,7 @@ async function undoAudit(user: PublicUser, auditId: number): Promise<Outcome> {
       });
   }
   await getDb().update(auditLog).set({ undoneAt: new Date().toISOString() }).where(eq(auditLog.id, row.id));
-  const ui: UiDirective[] = [{ type: "invalidate", keys: ["me", "schedule", "notifications", "brief", "audit"] }];
+  const ui: UiDirective[] = [{ type: "invalidate", keys: ["me", "schedule", "notifications", "brief", "audit", "homework", "teach-assignment", "journal"] }];
   if (undo.type === "settings") ui.push({ type: "theme", value: undo.theme });
   return { summary: "Вернул как было.", ui };
 }
@@ -1310,6 +1349,10 @@ export async function rejectPending(user: PublicUser, pendingId: string) {
     .where(and(eq(pendingActions.id, pendingId), eq(pendingActions.userId, user.id), isNull(pendingActions.consumedAt)))
     .returning();
   if (!rows[0]) throw notFound("Подтверждение не найдено");
+  await getDb()
+    .update(auditLog)
+    .set({ summary: sql`replace(${auditLog.summary}, 'Ждёт подтверждения', 'Отменено')` })
+    .where(and(eq(auditLog.userId, user.id), eq(auditLog.action, rows[0].action), sql`${auditLog.summary} like 'Ждёт подтверждения%'`));
   return { ok: true };
 }
 

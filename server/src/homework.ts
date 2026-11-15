@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { addDays, formatRuDate, moscowToday, nearestStudyDay } from "../../shared/src/dates";
 import type { PublicUser } from "../../shared/src/domain";
 import { matchDiscipline } from "../../shared/src/parser";
-import { samePerson } from "../../shared/src/names";
+import { samePerson, toDative } from "../../shared/src/names";
 import { getDb } from "./db/client";
 import { assignments, attendance, disciplines, groupAnnouncements, marks, scheduleItems, submissions, teachingLoad, users } from "./db/schema";
 import { publish } from "./hub";
@@ -296,7 +296,17 @@ export async function returnSubmission(user: PublicUser, assignmentId: number, s
     .set({ status: "returned", teacherComment: comment, updatedAt: new Date().toISOString() })
     .where(eq(submissions.id, submission.id));
   await notify(student.id, "homework", `Вернули на доработку: ${detail.title}`, comment, `/homework/${assignmentId}`);
-  return `«${detail.title}» возвращена ${student.fullName} на доработку.`;
+  return {
+    summary: `«${detail.title}» возвращена ${toDative(student.fullName)} на доработку.`,
+    undo: {
+      type: "submission" as const,
+      submissionId: submission.id,
+      previousStatus: submission.status,
+      previousScore: submission.score,
+      previousComment: submission.teacherComment,
+      markId: null,
+    },
+  };
 }
 
 export async function gradeSubmission(user: PublicUser, assignmentId: number, studentName: string, score: number, comment?: string) {
@@ -488,6 +498,15 @@ export async function remindDeadline(user: PublicUser, subject: string) {
     if (!when) continue;
     const { reminders } = await import("./db/schema");
     const title = `Сдать «${row.title}»`;
+    const existing = await getDb()
+      .select()
+      .from(reminders)
+      .where(and(eq(reminders.userId, user.id), eq(reminders.title, title), eq(reminders.done, false)))
+      .limit(1);
+    if (existing[0]) {
+      const clock = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Moscow" }).format(new Date(existing[0].dueAt));
+      return { summary: `Напоминание «${title}» уже стоит на ${formatRuDate(existing[0].dueAt.slice(0, 10))} в ${clock}.`, reminderId: existing[0].id, assignmentId: row.id };
+    }
     const [saved] = await getDb().insert(reminders).values({ userId: user.id, title, dueAt: when.toISOString() }).returning();
     await notify(user.id, "reminder", title, `До срока ${formatRuDate(row.deadline)}.`, `/homework/${row.id}`);
     const clock = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Moscow" }).format(when);
@@ -502,7 +521,7 @@ export async function openRoll(user: PublicUser) {
   if (!lesson) throw notFound("Ближайшей пары нет");
   const when = home.lessonDay === moscowToday() ? "сегодня" : formatRuDate(home.lessonDay);
   return {
-    summary: `Открываю явку ${when}: ${lesson.discipline}, ${lesson.groupName}.`,
+    summary: `Явка ближайшей пары, ${when}: ${lesson.discipline}, ${lesson.groupName}.`,
     to: `/teach/journal?group=${encodeURIComponent(lesson.groupName)}&discipline=${encodeURIComponent(lesson.discipline)}`,
   };
 }

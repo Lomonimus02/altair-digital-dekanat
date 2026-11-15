@@ -33,11 +33,13 @@ export function DashboardPage() {
   const focusDay = today?.items.length ? today : upcoming;
   const lessons = (focusDay?.items ?? []).slice(0, 3);
   const lessonTitle = today?.items.length ? "Сейчас" : "Ближайшие пары";
-  const dayName = focusDay ? new Date(`${focusDay.date}T12:00:00Z`).toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }) : "";
+  const dayName = focusDay
+    ? new Date(`${focusDay.date}T12:00:00Z`).toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).replace(/^\p{Lu}/u, (letter) => letter.toLowerCase())
+    : "";
   const dueWork = (homework.data?.homework ?? []).filter((row) => !["graded", "in_review", "submitted"].includes(row.submission.status)).slice(0, 3);
   const risky = (grades.data?.items ?? []).filter((item) => item.risk === "high" || item.risk === "medium").slice(0, 3);
   const openRequests = (requests.data?.requests ?? []).filter((row) => row.status === "ready" || row.status === "submitted" || row.status === "in_progress").slice(0, 3);
-  const unread = (notes.data?.notifications ?? []).filter((note) => !note.readAt).slice(0, 3);
+  const unread = dedupeNotes((notes.data?.notifications ?? []).filter((note) => !note.readAt)).slice(0, 3);
 
   return (
     <div className="space-y-4">
@@ -45,8 +47,8 @@ export function DashboardPage() {
         <h1 className="truncate">Панель управления</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">{user?.addressName}</p>
       </header>
-      <div className="grid items-stretch gap-4 lg:grid-cols-3">
-        <Glass target="today" className="lg:col-span-2">
+      <div className="home-grid">
+        <Glass target="today" className="home-main">
           <div className="mb-1 flex items-center justify-between gap-2">
             <h2 className="text-xl font-semibold">{lessonTitle}</h2>
             <Link className="inline-flex min-h-11 min-w-11 items-center px-2" to="/schedule">Все</Link>
@@ -74,7 +76,7 @@ export function DashboardPage() {
             </div>
             {openRequests.map((row) => (
               <p key={row.id} className="flex items-center justify-between gap-2 border-t border-white/40 py-2 text-sm first:border-0">
-                <span className="min-w-0 truncate font-semibold">{row.title}</span>
+                <span className="min-w-0 font-semibold">{row.title}</span>
                 <Pill tone="mid">{STATUS_LABEL[row.status]}</Pill>
               </p>
             ))}
@@ -142,7 +144,17 @@ function LessonLine({ lesson }: { lesson: LessonView }) {
   );
 }
 
-interface Note { id: number; title: string; body: string; readAt: string | null }
+interface Note { id: number; title: string; body: string; href?: string | null; readAt: string | null }
+
+function dedupeNotes(notes: Note[]) {
+  const seen = new Set<string>();
+  return notes.filter((note) => {
+    const key = note.href || note.title;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 interface StaffRow {
   id: number;
   title: string;

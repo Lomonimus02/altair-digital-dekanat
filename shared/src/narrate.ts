@@ -90,7 +90,7 @@ export function composeBrief(input: {
   const paragraphs: string[] = [];
   const active = input.todayLessons.filter((l) => l.changeType !== "cancelled");
   const cancelled = input.todayLessons.filter((l) => l.changeType === "cancelled");
-  if (!input.todayLessons.length) paragraphs.push(`Сегодня, ${longDay(input.todayISO)}, пар нет.`);
+  if (!input.todayLessons.length) paragraphs.push(`Сегодня, ${longDay(input.todayISO, true)}, пар нет.`);
   else {
     const names = active.map((l) => `${l.startsAt} ${l.discipline}`).join(", ");
     const cancelText = cancelled.length ? ` Отменено: ${cancelled.map((l) => l.discipline).join(", ")}.` : "";

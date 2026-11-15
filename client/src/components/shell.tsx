@@ -106,8 +106,9 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
   const tabTargets = new Set(tabs.map((link) => link.to));
   const moreLinks = links.filter((link) => !tabTargets.has(link.to));
 
+  const agentColumn = agent.open && xl;
   return (
-    <div className={`min-h-dvh md:grid md:grid-cols-[72px_minmax(0,1fr)] ${agent.open ? "xl:grid-cols-[248px_minmax(0,1fr)_400px]" : "xl:grid-cols-[248px_minmax(0,1fr)]"}`}>
+    <div className={`min-h-dvh md:grid md:grid-cols-[72px_minmax(0,1fr)] ${agentColumn ? "xl:grid-cols-[248px_minmax(0,1fr)_400px]" : "xl:grid-cols-[248px_minmax(0,1fr)]"}`}>
       <a href="#content" className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded-full focus:bg-white focus:px-3 focus:py-2">
         К содержанию
       </a>
@@ -142,7 +143,7 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
             </NavLink>
           </div>
         </header>
-        <main id="content" className="mx-auto w-full max-w-6xl px-4 pb-4 pt-4 md:px-6 md:pb-10 md:pt-6">
+        <main id="content" className="mx-auto w-full min-w-0 px-4 pb-4 pt-4 md:px-6 md:pb-10 md:pt-6">
           <AnimatePresence initial={false}>
             <motion.div
               key={location.pathname}
@@ -154,12 +155,12 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
             </motion.div>
           </AnimatePresence>
         </main>
-        {agent.open && xl ? (
-          <div className="sticky top-0 hidden h-dvh min-h-0 border-l border-black/5 xl:flex xl:flex-col">
-            <AgentPanel variant="dock" />
-          </div>
-        ) : null}
       </div>
+      {agentColumn ? (
+        <div data-testid="agent-column" className="sticky top-0 z-30 hidden h-dvh min-h-0 min-w-0 border-l border-black/5 xl:flex xl:flex-col">
+          <AgentPanel variant="dock" />
+        </div>
+      ) : null}
       {wide && !xl ? <AgentSheet mode="drawer" /> : !wide ? (
         <>
           {!agent.open || agent.peek ? <MobileNav tabs={tabs} onMore={() => setMore(true)} onAgent={() => { agent.setPeek(false); agent.setOpen(true); }} /> : null}

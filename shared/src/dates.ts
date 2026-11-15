@@ -92,8 +92,10 @@ export function weekdayRu(iso: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
-export function longDay(iso: string): string {
-  return `${weekdayRu(iso)}, ${formatRuDate(iso)}`;
+export function longDay(iso: string, lowerWeekday = false): string {
+  const day = weekdayRu(iso);
+  const name = lowerWeekday ? day.charAt(0).toLowerCase() + day.slice(1) : day;
+  return `${name}, ${formatRuDate(iso)}`;
 }
 
 export interface AcademicTerm {

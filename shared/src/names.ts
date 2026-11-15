@@ -8,6 +8,27 @@ export function surnameStem(raw: string) {
   return word.replace(/(ами|ями|ого|ему|ому|ыми|ими|ой|ей|ый|ий|ая|ую|ом|ем|ах|ях|ых|ам|ям|у|ю|а|я|е|ы|и)$/u, "");
 }
 
+/** Громов Артём Сергеевич → Громову Артёму Сергеевичу. */
+export function toDative(fullName: string): string {
+  return fullName
+    .trim()
+    .split(/\s+/)
+    .map((part, index) => declineDative(part, index))
+    .join(" ");
+}
+
+function declineDative(word: string, index: number): string {
+  if (/(ович|евич|ич)$/u.test(word)) return `${word}у`;
+  if (/(овна|евна|ична)$/u.test(word)) return `${word.slice(0, -1)}е`;
+  if (index === 0 && /а$/u.test(word)) return `${word.slice(0, -1)}ой`;
+  if (/ия$/u.test(word)) return `${word.slice(0, -1)}и`;
+  if (/[ая]$/u.test(word)) return `${word.slice(0, -1)}е`;
+  if (/й$/u.test(word)) return `${word.slice(0, -1)}ю`;
+  if (/ь$/u.test(word)) return `${word.slice(0, -1)}ю`;
+  if (/[бвгджзклмнпрстфхцчшщ]$/iu.test(word)) return `${word}у`;
+  return word;
+}
+
 export function samePerson(query: string, fullName: string) {
   const left = surnameStem(query);
   const right = surnameStem(fullName);

@@ -2,6 +2,7 @@ import type { AnswerCard, ChoiceChip, Citation, ConfirmCard, PublicUser, UiDirec
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { api, ApiError } from "./api";
 import { applyDirectives } from "./theme";
 import { hasWebGPU, loadModel, proposeLocally, suggestedSize, type ModelSize } from "./webllm";
@@ -145,8 +146,8 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
       }
       const navigateTo = response.ui?.find((item) => item.type === "navigate");
       const wide = window.matchMedia("(min-width: 768px)").matches;
-      const line = navigateTo ? navSentence(navigateTo.to) : "";
-      const say = response.say.replace(/^Открываю[^\n]*\n*/u, navigateTo ? "" : "");
+      const line = navigateTo && !response.say.trim() ? navSentence(navigateTo.to) : "";
+      const say = response.say;
       setMessages((current) => [
         ...current,
         {
@@ -238,6 +239,11 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
         await new Promise((resolve) => window.setTimeout(resolve, 420));
       }
       applyDirectives(response.ui, navigate, queryClient, { flash: Boolean(navigateTo) });
+      if (response.undoOffer) {
+        toast(response.summary, {
+          action: { label: "Отменить", onClick: () => void undo(response.undoOffer!.auditId) },
+        });
+      }
       if (navigateTo && !wide) {
         setPeekLine(specificPeek(navigateTo.to, response.summary));
         setPeek(true);
