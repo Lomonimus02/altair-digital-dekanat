@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { CHANGE_LABEL, KIND_LABEL, type LessonView } from "@shared/domain";
-import { formatWeekSpan, scheduleLook } from "@shared/dates";
+import { formatDdMm, formatWeekSpan, scheduleLook } from "@shared/dates";
 import { useAuth } from "../lib/auth";
 import { Star } from "lucide-react";
 import { useRef } from "react";
@@ -66,9 +66,9 @@ export function SchedulePage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <h1>Расписание</h1>
-          {look === "near" && focusDay ? <p className="text-sm text-[var(--muted)]">Сегодня пар нет — ближайшие: {shortDay(focusDay.weekday).toLowerCase()} {focusDay.date.slice(8)}.{focusDay.date.slice(5, 7)}</p> : null}
-          {look === "past" && focusDay ? <p className="text-sm text-[var(--muted)]">Прошедшая неделя: {shortDay(focusDay.weekday).toLowerCase()} {focusDay.date.slice(8)}.{focusDay.date.slice(5, 7)}</p> : null}
-          {look === "later" && focusDay ? <p className="text-sm text-[var(--muted)]">Вы смотрите {shortDay(focusDay.weekday).toLowerCase()} {focusDay.date.slice(8)}.{focusDay.date.slice(5, 7)}</p> : null}
+          {look === "near" && focusDay ? <p className="text-sm text-[var(--muted)]">Сегодня пар нет — ближайшие: {shortDay(focusDay.weekday).toLowerCase()} {formatDdMm(focusDay.date)}</p> : null}
+          {look === "past" && focusDay ? <p className="text-sm text-[var(--muted)]">Прошедшая неделя: {shortDay(focusDay.weekday).toLowerCase()} {formatDdMm(focusDay.date)}</p> : null}
+          {look === "later" && focusDay ? <p className="text-sm text-[var(--muted)]">Вы смотрите {shortDay(focusDay.weekday).toLowerCase()} {formatDdMm(focusDay.date)}</p> : null}
         </div>
         <div className="hidden items-center gap-2 xl:flex">
           <button className="btn btn-glass h-11 px-4" onClick={() => shift(-7)}>Предыдущая неделя</button>
@@ -126,7 +126,7 @@ function DayCard({ day, today }: { day?: { date: string; weekday: string; items:
   return (
     <Glass target={`schedule-day-${day.date}`} className={day.date === today ? "border border-green-400/50 bg-green-500/10" : ""}>
       <div className={`-mx-4 -mt-4 mb-3 rounded-t-[2rem] px-4 py-3 sm:-mx-5 sm:-mt-5 ${day.date === today ? "bg-green-500/10" : "bg-slate-700/10"}`}>
-        <h2 className="text-lg font-semibold">{day.weekday}, {day.date.slice(8)}.{day.date.slice(5, 7)}</h2>
+        <h2 className="text-lg font-semibold">{day.weekday}, {formatDdMm(day.date)}</h2>
       </div>
       {day.items.length ? day.items.map((lesson) => <Lesson key={lesson.id} lesson={lesson} />) : <p className="py-8 text-center text-sm text-[var(--muted)]">Занятий нет</p>}
     </Glass>

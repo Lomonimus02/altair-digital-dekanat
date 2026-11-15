@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
-import { academicPeriod, addDays, longDay, mondayOf, moscowToday, studyWeek, weekdayRu } from "../../shared/src/dates";
+import { academicPeriod, addDays, formatDdMm, longDay, mondayOf, moscowToday, studyWeek, weekdayRu } from "../../shared/src/dates";
 import { addressName, initials, type LessonView, type PublicUser, type Role, type Theme } from "../../shared/src/domain";
 import { getDb } from "./db/client";
 import {
@@ -152,7 +152,7 @@ async function notifySoonChanges(userId: number, items: LessonView[]) {
   for (const item of items) {
     if (item.changeType === "none" || item.date < today || item.date > until) continue;
     const title = "Изменение в расписании";
-    const body = `${item.date.slice(8)}.${item.date.slice(5, 7)} ${item.discipline}: ${item.changeNote ?? ""}`.trim();
+    const body = `${formatDdMm(item.date)} ${item.discipline}: ${item.changeNote ?? ""}`.trim();
     const href = `/schedule?date=${item.date}`;
     const existing = await getDb()
       .select({ id: notifications.id })

@@ -1,3 +1,4 @@
+import { formatDdMm } from "@shared/dates";
 import type { AnswerCard, ChoiceChip, Citation, ConfirmCard, PublicUser, UiDirective } from "@shared/domain";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
@@ -353,7 +354,7 @@ function specificPeek(to: string, say: string) {
   if (to.includes("/homework/")) return title ? `Показал «${title}»` : "Показал задание";
   if (to.startsWith("/schedule")) {
     const date = url.searchParams.get("date");
-    return date ? `Показал расписание ${date.slice(8)}.${date.slice(5, 7)}` : "Показал расписание";
+    return date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? `Показал расписание ${formatDdMm(date)}` : "Показал расписание";
   }
   if (to.startsWith("/grades")) return "Показал оценки";
   if (to.startsWith("/requests")) return "Показал заявки";

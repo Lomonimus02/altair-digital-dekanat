@@ -1,17 +1,20 @@
 import { and, asc, eq, ne } from "drizzle-orm";
-import { addDays, mondayOf, studyWeek, weekdayIndex } from "../../../shared/src/dates";
+import { addDays, formatDdMm, mondayOf, studyWeek, weekdayIndex } from "../../../shared/src/dates";
 import { getDb, getPool } from "./client";
 import { announcements, assignments, notifications, scheduleItems, users } from "./schema";
-import { GROUPS, PAIRS, teacherOnSchedule, type Slot } from "./timetable";
+import { GROUPS, PAIRS, teacherOnSchedule, usualRoom, type Slot } from "./timetable";
 
 const END = "2026-12-31";
 const FROM = "2026-11-16";
 
 const CHANGE_NOTES = {
-  room: "Аудитория изменена: была 401, теперь 415",
   cancelled: "Пара отменена: преподаватель на конференции",
   moved: "Перенесено на пятницу, 13:00–14:30, ауд. 314",
 } as const;
+
+function roomChangeNote(usual: string, next: string) {
+  return `Аудитория изменена: была ${usual}, теперь ${next}`;
+}
 
 const HOMEWORK = [
   {
@@ -85,6 +88,7 @@ export async function extendSchedule() {
   }
   await backfillMovedTargets();
   await unifyLawItTeacher();
+  await fixChangeNotes();
   await insertHomework();
   await insertAnnouncements();
   console.log("Расписание продлено до 31 декабря. Оценки и сдачи не менялись. Переносы дополнены пятницей.");
@@ -144,7 +148,9 @@ async function insertWeekChange(groupName: string, week: string[], weekIndex: nu
         room: kind === "room" ? "415" : "314",
         teacher: "доц. Орлов П. Н.",
       };
-  await insertSlot(groupName, thursday, slot, kind, CHANGE_NOTES[kind], slot.room);
+  const usual = usualRoom(groupName, slot.discipline, slot.kind);
+  const note = kind === "room" ? roomChangeNote(usual ?? slot.room, slot.room) : CHANGE_NOTES[kind];
+  await insertSlot(groupName, thursday, slot, kind, note, slot.room);
 }
 
 async function backfillMovedTargets() {
@@ -176,9 +182,25 @@ async function backfillMovedTargets() {
       room: "314",
       teacher: row.teacher,
       changeType: "moved",
-      changeNote: `Перенесено с четверга, ${Number(row.date.slice(8))}.${row.date.slice(5, 7)}`,
+      changeNote: `Перенесено с четверга, ${formatDdMm(row.date)}`,
       pairNumber: pair,
     });
+  }
+}
+
+async function fixChangeNotes() {
+  const db = getDb();
+  const rows = await db.select().from(scheduleItems).orderBy(asc(scheduleItems.id));
+  for (const row of rows) {
+    if (!row.changeNote) continue;
+    let note = row.changeNote;
+    if (row.changeType === "room" && row.room) {
+      const usual = usualRoom(row.groupName, row.discipline, row.kind);
+      if (usual) note = roomChangeNote(usual, row.room);
+    }
+    note = note.replace(/, (\d)\.(\d{2})$/g, (_, day: string, month: string) => `, 0${day}.${month}`);
+    if (note === row.changeNote) continue;
+    await db.update(scheduleItems).set({ changeNote: note }).where(eq(scheduleItems.id, row.id));
   }
 }
 

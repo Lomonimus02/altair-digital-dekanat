@@ -1,4 +1,4 @@
-import { longDay } from "./dates";
+import { longDay, shortDayDate } from "./dates";
 import { CHANGE_LABEL, KIND_LABEL, STATUS_LABEL, type LessonView, type RequestStatus } from "./domain";
 import { formatMark, type NavigatorItem } from "./navigator";
 
@@ -64,6 +64,47 @@ export function narrateSchedule(opts: {
   if (!dayItems.length) return `${head} Занятий нет.`;
   const lines = dayItems.map((lesson, index) => formatLesson(lesson, index));
   return `${head}\n${lines.join("\n")}`;
+}
+
+export function narrateWeekSchedule(items: LessonView[], opts: { label: string; sundayNote: boolean }): string {
+  const prefix = opts.sundayNote ? "Сегодня воскресенье. " : "";
+  if (!items.length) return `${prefix}${opts.label}: занятий нет.`;
+  const byDate = new Map<string, LessonView[]>();
+  for (const item of items) {
+    const list = byDate.get(item.date) ?? [];
+    list.push(item);
+    byDate.set(item.date, list);
+  }
+  const lines = [...byDate.keys()].sort().map((date) => {
+    const lessons = (byDate.get(date) ?? []).slice().sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.pairNumber - b.pairNumber);
+    return `${shortDayDate(date)}: ${lessons.map(formatWeekLesson).join("; ")}`;
+  });
+  return `${prefix}${opts.label}\n${lines.join("\n")}`;
+}
+
+export function weekCardRows(items: LessonView[]): { label: string; value: string }[] {
+  const byDate = new Map<string, LessonView[]>();
+  for (const item of items) {
+    const list = byDate.get(item.date) ?? [];
+    list.push(item);
+    byDate.set(item.date, list);
+  }
+  return [...byDate.keys()].sort().map((date) => {
+    const lessons = (byDate.get(date) ?? []).slice().sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.pairNumber - b.pairNumber);
+    return { label: shortDayDate(date), value: lessons.map(formatWeekLesson).join("; ") };
+  });
+}
+
+function formatWeekLesson(lesson: LessonView): string {
+  const place = [lesson.groupName, lesson.room ? `ауд. ${lesson.room}` : null].filter(Boolean).join(", ");
+  return `${lesson.startsAt} ${lesson.discipline}${place ? `, ${place}` : ""}${weekChange(lesson)}`;
+}
+
+function weekChange(lesson: LessonView): string {
+  if (lesson.changeType === "cancelled") return " — отменена";
+  if (lesson.changeType === "room") return ` — другая аудитория${lesson.changeNote ? ` (${lesson.changeNote})` : ""}`;
+  if (lesson.changeType === "moved") return ` — перенос${lesson.changeNote ? ` (${lesson.changeNote})` : ""}`;
+  return "";
 }
 
 function formatLesson(lesson: LessonView, index: number): string {

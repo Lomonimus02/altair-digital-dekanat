@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { academicPeriod } from "../../shared/src/dates";
+import { academicPeriod, formatDdMm, shortDayDate } from "../../shared/src/dates";
+import { narrateWeekSchedule } from "../../shared/src/narrate";
 import { analyzeDiscipline } from "../../shared/src/navigator";
 import { parseIntent } from "../../shared/src/parser";
 import { registry } from "../../shared/src/registry";
@@ -103,6 +104,69 @@ describe("реестр", () => {
     expect(connect).toContain("https://huggingface.co");
     expect(connect).not.toContain("gigachat");
     expect(cspDirectives().scriptSrc).toContain("'wasm-unsafe-eval'");
+  });
+});
+
+describe("недельное расписание агента", () => {
+  const lesson = (patch: Partial<import("../../shared/src/domain").LessonView>): import("../../shared/src/domain").LessonView => ({
+    id: 1,
+    date: "2026-11-16",
+    startsAt: "09:00",
+    endsAt: "10:30",
+    discipline: "Программирование",
+    kind: "lecture",
+    room: "314",
+    teacher: "доц. Орлов П. Н.",
+    changeType: "none",
+    changeNote: null,
+    pairNumber: 1,
+    flagged: false,
+    groupName: "БИ-3-26-04",
+    ...patch,
+  });
+
+  it("группирует дни и называет отмену, аудиторию и перенос", () => {
+    expect(formatDdMm("2026-12-03")).toBe("03.12");
+    expect(shortDayDate("2026-11-16")).toBe("Пн, 16 ноября");
+    const text = narrateWeekSchedule(
+      [
+        lesson({ id: 1, date: "2026-11-16", startsAt: "09:00", pairNumber: 1 }),
+        lesson({
+          id: 2,
+          date: "2026-11-19",
+          startsAt: "13:00",
+          pairNumber: 3,
+          discipline: "Экономика фирмы",
+          room: "101",
+          changeType: "cancelled",
+          changeNote: "Преподаватель на конференции",
+        }),
+        lesson({
+          id: 3,
+          date: "2026-11-19",
+          startsAt: "09:00",
+          pairNumber: 1,
+          discipline: "Линейная алгебра",
+          room: "415",
+          changeType: "room",
+          changeNote: "Аудитория изменена: была 401, теперь 415",
+        }),
+        lesson({
+          id: 4,
+          date: "2026-11-20",
+          startsAt: "13:00",
+          pairNumber: 3,
+          changeType: "moved",
+          changeNote: "Перенесено с четверга, 19.11",
+          groupName: "ЮР-1-26-02",
+        }),
+      ],
+      { label: "Эта неделя", sundayNote: false },
+    );
+    expect(text).toContain("Пн, 16 ноября: 09:00 Программирование, БИ-3-26-04, ауд. 314");
+    expect(text).toContain("Чт, 19 ноября: 09:00 Линейная алгебра, БИ-3-26-04, ауд. 415 — другая аудитория (Аудитория изменена: была 401, теперь 415); 13:00 Экономика фирмы, БИ-3-26-04, ауд. 101 — отменена");
+    expect(text).toContain("Пт, 20 ноября: 13:00 Программирование, ЮР-1-26-02, ауд. 314 — перенос (Перенесено с четверга, 19.11)");
+    expect(text.indexOf("Пн, 16 ноября")).toBeLessThan(text.indexOf("Чт, 19 ноября"));
   });
 });
 

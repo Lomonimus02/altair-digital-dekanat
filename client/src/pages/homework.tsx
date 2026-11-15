@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { formatDdMm } from "@shared/dates";
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
@@ -99,7 +100,7 @@ export function HomeworkPage() {
 
 function Deadline({ deadline, today, settled = false }: { deadline: string; today: string; settled?: boolean }) {
   const tone = settled ? "low" : deadline < today ? "high" : deadline === today ? "mid" : "low";
-  return <Pill tone={tone}>{deadline.slice(8)}.{deadline.slice(5, 7)}</Pill>;
+  return <Pill tone={tone}>{formatDdMm(deadline)}</Pill>;
 }
 
 export function HomeworkDetail() {
@@ -127,7 +128,7 @@ export function HomeworkDetail() {
       {detail.data.reminder ? <Glass><p className="text-sm font-semibold">Напоминание</p><p className="mt-1 text-sm">{detail.data.reminder.title}</p></Glass> : null}
       <Glass>
         <p className="text-sm">{work.description}</p>
-        {work.lesson ? <p className="mt-2 text-sm text-[var(--muted)]">К паре {work.lesson.date.slice(8)}.{work.lesson.date.slice(5, 7)}, {work.lesson.startsAt}</p> : null}
+        {work.lesson ? <p className="mt-2 text-sm text-[var(--muted)]">К паре {formatDdMm(work.lesson.date)}, {work.lesson.startsAt}</p> : null}
         <div className="mt-3 flex flex-wrap gap-2">
           <Button variant="glass" className="h-11 px-4" onClick={() => agent.ask(`Что сдавать по «${work.title}»?`)}>Спросить про это</Button>
         </div>

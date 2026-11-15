@@ -75,3 +75,10 @@ export const GROUPS = [
 export function teacherOnSchedule(name: string) {
   return name.replace("доц. Орлов П. С.", "доц. Орлов П. Н.");
 }
+
+export function usualRoom(groupName: string, discipline: string, kind: string): string | null {
+  const template = GROUPS.find(([name]) => name === groupName)?.[1];
+  if (!template) return null;
+  const slots = Object.values(template).flat();
+  return slots.find((slot) => slot.discipline === discipline && slot.kind === kind)?.room ?? slots.find((slot) => slot.discipline === discipline)?.room ?? null;
+}

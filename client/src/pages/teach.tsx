@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { formatDdMm } from "@shared/dates";
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
@@ -278,7 +279,7 @@ function marksText(marks: JournalStudent["marks"]) {
 function attendanceLabel(studyDate?: string) {
   if (!studyDate) return "Явка";
   if (studyDate === moscowDate()) return "Явка сегодня";
-  return `Явка ${studyDate.slice(8)}.${studyDate.slice(5, 7)}`;
+  return `Явка ${formatDdMm(studyDate)}`;
 }
 
 function AttendanceButton({ student, studyDate, group, discipline, onDone }: { student: JournalStudent; studyDate?: string; group: string; discipline: string; onDone: () => void }) {

@@ -93,6 +93,18 @@ export function daysBetween(fromISO: string, toISO: string): number {
   return Math.round((b - a) / 86_400_000);
 }
 
+export function formatDdMm(iso: string): string {
+  return `${iso.slice(8, 10)}.${iso.slice(5, 7)}`;
+}
+
+const SHORT_WEEKDAYS = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+
+export function shortDayDate(iso: string): string {
+  const [year, month, day] = iso.split("-").map(Number);
+  const weekday = SHORT_WEEKDAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()] ?? "";
+  return `${weekday}, ${day} ${GENITIVE_MONTHS[month - 1] ?? ""}`;
+}
+
 export function formatRuDate(iso: string, withYear = false): string {
   const [y, m, d] = iso.split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d));

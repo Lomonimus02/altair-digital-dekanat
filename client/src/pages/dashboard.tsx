@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { formatDdMm } from "@shared/dates";
 import { KIND_LABEL, STATUS_LABEL, type LessonView, type RequestStatus } from "@shared/domain";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
@@ -65,7 +66,7 @@ export function DashboardPage() {
             {dueWork.length ? dueWork.map((row) => (
               <Link key={row.id} to={`/homework/${row.id}`} className="block min-h-11 border-t border-white/40 py-2 text-sm first:border-0">
                 <span className="font-semibold">{row.title}</span>
-                <span className="text-[var(--muted)]"> · до {row.deadline.slice(8)}.{row.deadline.slice(5, 7)}</span>
+                <span className="text-[var(--muted)]"> · до {formatDdMm(row.deadline)}</span>
               </Link>
             )) : <p className="text-sm text-[var(--muted)]">Срочных заданий нет.</p>}
           </Glass>

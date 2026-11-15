@@ -77,6 +77,13 @@ it("продление расписания дважды не трогает л�
     (row) => row.groupName === "ЮР-1-26-02" && row.discipline === "Информационные технологии в юридической деятельности" && row.teacher !== "доц. Орлов П. Н.",
   );
   expect(kotov).toHaveLength(0);
+  for (const row of changes.filter((item) => item.changeType === "room")) {
+    if (row.discipline === "Программирование") expect(row.changeNote).toBe(`Аудитория изменена: была 314, теперь ${row.room}`);
+    if (row.discipline.includes("Информационные")) expect(row.changeNote).toBe(`Аудитория изменена: была 505, теперь ${row.room}`);
+    if (row.discipline === "Линейная алгебра") expect(row.changeNote).toContain("была 401");
+  }
+  expect(changes.some((row) => /, \d\.\d{2}$/.test(row.changeNote ?? ""))).toBe(false);
+  expect(changes.some((row) => /Перенесено с четверга, \d{2}\.\d{2}/.test(row.changeNote ?? ""))).toBe(true);
 
   const [sorokin] = await db.select().from(users).where(eq(users.login, "sorokin.mo"));
   const [belova] = await db.select().from(users).where(eq(users.login, "bi.01"));
@@ -114,10 +121,31 @@ it("преподаватель видит свою неделю, а подпис
   });
   expect(turn.statusCode).toBe(200);
   const answer = turn.json() as { say: string; cards?: unknown[]; link?: { to: string }; ui?: { type: string }[] };
-  expect(answer.say).toMatch(/БИ-3-26-04|ЮР-1-26-02/);
+  expect(answer.say).toMatch(/Пн, \d{1,2} /);
+  expect(answer.say).toMatch(/ауд\./);
+  expect(answer.say).toMatch(/БИ-3-26-04/);
+  expect(answer.say).toMatch(/ЮР-1-26-02/);
+  expect(answer.say).toMatch(/отменена|другая аудитория|перенос/);
   expect(answer.cards?.length).toBeGreaterThan(0);
   expect(answer.link?.to).toContain("/schedule");
   expect(answer.ui?.some((entry) => entry.type === "navigate")).toBe(false);
+
+  const studentLogin = await app.inject({ method: "POST", url: "/api/auth/login", payload: { login: "sorokin.mo", password: "Altair-student-31" } });
+  const studentCookie = asCookie(studentLogin.headers["set-cookie"]);
+  const studentCsrf = studentLogin.json().csrfToken as string;
+  const studentTurn = await app.inject({
+    method: "POST",
+    url: "/api/agent/turn",
+    payload: { message: "что у меня на неделе", mode: "fallback" },
+    headers: { cookie: studentCookie, "x-csrf-token": studentCsrf },
+  });
+  const studentSay = studentTurn.json().say as string;
+  expect(studentSay).toMatch(/Пн, \d{1,2} /);
+  expect(studentSay).toContain("БИ-3-26-04");
+  expect(studentSay).toMatch(/ауд\./);
+  expect(studentSay).toContain("отменена");
+  expect(studentSay).toContain("другая аудитория");
+  expect(studentSay).toContain("перенос");
 });
 
 it("прошедшая дата не называется ближайшей", () => {

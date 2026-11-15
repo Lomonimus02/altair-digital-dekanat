@@ -18,7 +18,7 @@ import {
   type UndoPayload,
 } from "../../shared/src/domain";
 import { analyzeSession, withHypothetical } from "../../shared/src/navigator";
-import { composeBrief, narrateAdvice, narrateOverview } from "../../shared/src/narrate";
+import { composeBrief, narrateAdvice, narrateOverview, narrateWeekSchedule, weekCardRows } from "../../shared/src/narrate";
 import { samePerson } from "../../shared/src/names";
 import { matchDiscipline, parseIntent } from "../../shared/src/parser";
 import { registryByName, relaxArgs, schemas, stepLabel } from "../../shared/src/registry";
@@ -493,21 +493,24 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
     const resolved = resolveWhen(when);
     const data = await loadSchedule(user, resolved.focus, true);
     const mode = when === "today" || when === "tomorrow" || when === "day_after" ? "day" : "week";
-    const pool = mode === "day" ? data.items.filter((item) => item.date === resolved.focus) : data.items.filter((item) => item.changeType !== "cancelled");
-    const shown = pool.slice(0, user.role === "teacher" ? 12 : 8);
-    const lessonLine = (item: (typeof shown)[number]) =>
-      user.role === "teacher"
-        ? `${item.startsAt} ${item.discipline}, ${item.groupName ?? "группа"}`
-        : `${item.discipline}${item.room ? ` · ${item.room}` : ""}`;
-    const summary =
-      user.role === "teacher"
-        ? `${resolved.sundayNote ? "Сегодня воскресенье. " : ""}${resolved.label}: ${pool.length ? pool.slice(0, 8).map((item) => `${item.startsAt} ${item.discipline}, ${item.groupName ?? ""}`).join("; ") : "занятий нет."}`
-        : `${resolved.sundayNote ? "Сегодня воскресенье. " : ""}${resolved.label}: ${pool.length ? ruCount(pool.length, "занятие", "занятия", "занятий") : "занятий нет."}`;
+    const pool = mode === "day" ? data.items.filter((item) => item.date === resolved.focus) : data.items;
+    if (mode === "week") {
+      return {
+        summary: narrateWeekSchedule(pool, { label: resolved.label, sundayNote: resolved.sundayNote }),
+        card: { title: resolved.label, rows: weekCardRows(pool) },
+        ui: [{ type: "navigate", to: `/schedule?date=${resolved.focus}`, highlight: `schedule-day-${resolved.focus}` }],
+      };
+    }
+    const shown = pool.slice(0, 8);
+    const summary = `${resolved.sundayNote ? "Сегодня воскресенье. " : ""}${resolved.label}: ${pool.length ? ruCount(pool.length, "занятие", "занятия", "занятий") : "занятий нет."}`;
     return {
       summary,
       card: {
         title: resolved.label,
-        rows: shown.map((item) => ({ label: `${item.startsAt}–${item.endsAt}`, value: lessonLine(item) })),
+        rows: shown.map((item) => ({
+          label: `${item.startsAt}–${item.endsAt}`,
+          value: `${item.discipline}${item.groupName ? `, ${item.groupName}` : ""}${item.room ? `, ауд. ${item.room}` : ""}`,
+        })),
       },
       ui: [{ type: "navigate", to: `/schedule?date=${resolved.focus}`, highlight: `schedule-day-${resolved.focus}` }],
     };
