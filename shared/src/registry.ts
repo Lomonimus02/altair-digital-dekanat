@@ -207,7 +207,7 @@ export const registry: RegistryItem[] = [
   item("undo", "reversible", both, "Отменить действие по номеру", "auditId"),
   item("undo_last", "reversible", both, "Отменить последнее обратимое действие", ""),
   item("mark_notifications_read", "reversible", both, "Прочитать уведомления", "all?: true, ids?"),
-  item("get_schedule", "read", ["student"], "Расписание", "when: today|tomorrow|day_after|week|next_week|prev_week"),
+  item("get_schedule", "read", ["student", "teacher"], "Расписание", "when: today|tomorrow|day_after|week|next_week|prev_week"),
   item("get_grades", "read", ["student"], "Оценки", "subject?, semester?"),
   item("get_session_navigator", "read", ["student"], "Что нужно для сессии и автомата", "subject?"),
   item("simulate_mark", "read", ["student"], "Прикинуть следующую оценку, ничего не записывая", "subject, value 2..5"),

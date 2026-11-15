@@ -1,6 +1,6 @@
-import { count, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { mondayOf, scheduleLook } from "../../shared/src/dates";
+import { formatWeekSpan, mondayOf, scheduleLook } from "../../shared/src/dates";
 import { buildApp } from "../src/app";
 import { getDb } from "../src/db/client";
 import { extendSchedule } from "../src/db/seed-schedule-extend";
@@ -57,6 +57,67 @@ it("продление расписания дважды не трогает л�
   const added = await db.select().from(assignments).where(eq(assignments.title, "Лабораторная: транзакции"));
   expect(added).toHaveLength(1);
   expect(added[0]?.deadline).toBe("2026-11-27");
+
+  const sources = changes.filter((row) => row.changeType === "moved" && (row.changeNote ?? "").toLowerCase().includes("пятниц"));
+  expect(sources.length).toBeGreaterThan(0);
+  for (const source of sources) {
+    const friday = nextDay(source.date);
+    const target = changes.find(
+      (row) =>
+        row.groupName === source.groupName &&
+        row.date === friday &&
+        row.discipline === source.discipline &&
+        (row.changeNote ?? "").startsWith("Перенесено с"),
+    );
+    expect(target, `${source.groupName} ${source.date}`).toBeTruthy();
+    expect(target?.startsAt).toBe("13:00");
+  }
+
+  const kotov = changes.filter(
+    (row) => row.groupName === "ЮР-1-26-02" && row.discipline === "Информационные технологии в юридической деятельности" && row.teacher !== "доц. Орлов П. Н.",
+  );
+  expect(kotov).toHaveLength(0);
+
+  const [sorokin] = await db.select().from(users).where(eq(users.login, "sorokin.mo"));
+  const [belova] = await db.select().from(users).where(eq(users.login, "bi.01"));
+  const [selectLab] = await db.select().from(assignments).where(eq(assignments.title, "Лабораторная: SELECT"));
+  const owned = await db.select().from(submissions).where(and(eq(submissions.assignmentId, selectLab.id), eq(submissions.studentId, sorokin.id)));
+  expect(owned).toHaveLength(1);
+  const misplaced = await db.select().from(submissions).where(and(eq(submissions.assignmentId, selectLab.id), eq(submissions.studentId, belova.id)));
+  expect(misplaced).toHaveLength(0);
+});
+
+it("преподаватель видит свою неделю, а подпись недели стоит в родительном падеже", async () => {
+  await extendSchedule();
+  expect(formatWeekSpan("2026-11-23", "2026-11-28")).toBe("23–28 ноября");
+  expect(formatWeekSpan("2026-11-30", "2026-12-05")).toBe("30 ноября – 5 декабря");
+
+  const loginRes = await app.inject({ method: "POST", url: "/api/auth/login", payload: { login: "orlov.pn", password: "Altair-teacher-58" } });
+  expect(loginRes.statusCode).toBe(200);
+  const cookie = asCookie(loginRes.headers["set-cookie"]);
+  const csrf = loginRes.json().csrfToken as string;
+  const schedule = await app.inject({
+    method: "GET",
+    url: "/api/schedule?date=2026-12-04",
+    headers: { cookie, "x-csrf-token": csrf },
+  });
+  expect(schedule.statusCode).toBe(200);
+  const body = schedule.json() as { items: { discipline: string; groupName: string; teacher: string }[] };
+  expect(body.items.some((item) => item.groupName === "ЮР-1-26-02" && item.discipline.includes("Информационные"))).toBe(true);
+  expect(body.items.every((item) => item.groupName === "БИ-3-26-04" || item.groupName === "ЮР-1-26-02")).toBe(true);
+
+  const turn = await app.inject({
+    method: "POST",
+    url: "/api/agent/turn",
+    payload: { message: "что у меня на неделе", mode: "fallback" },
+    headers: { cookie, "x-csrf-token": csrf },
+  });
+  expect(turn.statusCode).toBe(200);
+  const answer = turn.json() as { say: string; cards?: unknown[]; link?: { to: string }; ui?: { type: string }[] };
+  expect(answer.say).toMatch(/БИ-3-26-04|ЮР-1-26-02/);
+  expect(answer.cards?.length).toBeGreaterThan(0);
+  expect(answer.link?.to).toContain("/schedule");
+  expect(answer.ui?.some((entry) => entry.type === "navigate")).toBe(false);
 });
 
 it("прошедшая дата не называется ближайшей", () => {
@@ -84,7 +145,22 @@ async function snapshot() {
 }
 
 function nextMonday(iso: string) {
+  return nextDay(iso, 7);
+}
+
+function nextDay(iso: string, shift = 1) {
   const [year, month, day] = iso.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day + 7));
+  const date = new Date(Date.UTC(year, month - 1, day + shift));
   return date.toISOString().slice(0, 10);
+}
+
+function asCookie(value: string | string[] | undefined) {
+  const lines = !value ? [] : Array.isArray(value) ? value : [value];
+  const jar: Record<string, string> = {};
+  for (const line of lines) {
+    const [pair] = line.split(";");
+    const [key, raw] = pair.split("=");
+    jar[key] = raw;
+  }
+  return `sid=${jar.sid}; csrf=${jar.csrf}`;
 }

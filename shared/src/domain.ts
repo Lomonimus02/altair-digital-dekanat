@@ -164,6 +164,7 @@ export interface LessonView {
   changeNote: string | null;
   pairNumber: number;
   flagged: boolean;
+  groupName?: string | null;
 }
 
 export type MarkKind = "current" | "exam" | "credit";

@@ -32,6 +32,7 @@ const cases: { role: "student" | "staff" | "teacher"; phrase: string; tool: stri
   { role: "staff", phrase: "опубликуй объявление: Приём справок до 17", tool: "staff_publish_announcement" },
   { role: "teacher", phrase: "покажи непроверенные работы БИ-3-26-04", tool: "teacher_list_submissions" },
   { role: "teacher", phrase: "что у меня сегодня", tool: "teacher_home" },
+  { role: "teacher", phrase: "что у меня на неделе", tool: "get_schedule", args: { when: "week" } },
   { role: "teacher", phrase: "поставь 5 Сорокину за лабу", tool: "teacher_grade_homework", args: { score: 5 } },
   { role: "teacher", phrase: "верни на доработку Сорокину лабу с комментарием добавь пример", tool: "teacher_return_homework" },
   { role: "teacher", phrase: "отметь отсутствующих Сорокина", tool: "teacher_mark_absent" },

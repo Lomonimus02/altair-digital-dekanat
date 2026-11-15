@@ -13,6 +13,7 @@ import {
   requests,
   scheduleFlags,
   scheduleItems,
+  teachingLoad,
   users,
 } from "./db/schema";
 import { notFound } from "./httpError";
@@ -48,6 +49,7 @@ export async function findUserById(id: number) {
 }
 
 export async function loadSchedule(user: PublicUser, focus: string, includeCancelled = true) {
+  if (user.role === "teacher") return loadTeacherSchedule(user, focus, includeCancelled);
   if (!user.groupName) return { today: focus, focus, weekStart: mondayOf(focus), days: [], items: [] as LessonView[] };
   const days = studyWeek(focus);
   const rows = await getDb()
@@ -78,12 +80,63 @@ export async function loadSchedule(user: PublicUser, focus: string, includeCance
       changeNote: row.changeNote,
       pairNumber: row.pairNumber,
       flagged: flagged.has(row.id),
+      groupName: row.groupName,
     }));
   await notifySoonChanges(user.id, items);
   return {
     today: focus,
     focus,
     weekStart: days[0],
+    days: days.map((date) => ({
+      date,
+      weekday: weekdayRu(date),
+      items: items.filter((item) => item.date === date),
+    })),
+    items,
+  };
+}
+
+async function loadTeacherSchedule(user: PublicUser, focus: string, includeCancelled: boolean) {
+  const days = studyWeek(focus);
+  const empty = {
+    today: focus,
+    focus,
+    weekStart: days[0],
+    days: days.map((date) => ({ date, weekday: weekdayRu(date), items: [] as LessonView[] })),
+    items: [] as LessonView[],
+  };
+  const load = await getDb()
+    .select()
+    .from(teachingLoad)
+    .where(eq(teachingLoad.teacherId, user.id))
+    .orderBy(asc(teachingLoad.groupName), asc(teachingLoad.discipline), asc(teachingLoad.id));
+  if (!load.length) return empty;
+  const groups = [...new Set(load.map((row) => row.groupName))];
+  const rows = await getDb()
+    .select()
+    .from(scheduleItems)
+    .where(and(inArray(scheduleItems.groupName, groups), gte(scheduleItems.date, days[0]), lte(scheduleItems.date, days[5])))
+    .orderBy(asc(scheduleItems.date), asc(scheduleItems.pairNumber), asc(scheduleItems.id));
+  const items: LessonView[] = rows
+    .filter((row) => load.some((item) => item.groupName === row.groupName && item.discipline === row.discipline))
+    .filter((row) => includeCancelled || row.changeType !== "cancelled")
+    .map((row) => ({
+      id: row.id,
+      date: row.date,
+      startsAt: row.startsAt,
+      endsAt: row.endsAt,
+      discipline: row.discipline,
+      kind: row.kind,
+      room: row.room,
+      teacher: row.teacher,
+      changeType: row.changeType as LessonView["changeType"],
+      changeNote: row.changeNote,
+      pairNumber: row.pairNumber,
+      flagged: false,
+      groupName: row.groupName,
+    }));
+  return {
+    ...empty,
     days: days.map((date) => ({
       date,
       weekday: weekdayRu(date),

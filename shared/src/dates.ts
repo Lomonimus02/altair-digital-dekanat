@@ -69,6 +69,17 @@ export function ruCount(n: number, one: string, few: string, many: string): stri
 }
 
 /** Как подписать неделю, если в ней нет сегодняшнего дня. */
+const GENITIVE_MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+
+export function formatWeekSpan(startISO: string, endISO: string): string {
+  const startDay = Number(startISO.slice(8, 10));
+  const endDay = Number(endISO.slice(8, 10));
+  const startMonth = GENITIVE_MONTHS[Number(startISO.slice(5, 7)) - 1] ?? "";
+  const endMonth = GENITIVE_MONTHS[Number(endISO.slice(5, 7)) - 1] ?? "";
+  if (startISO.slice(5, 7) === endISO.slice(5, 7)) return `${startDay}–${endDay} ${endMonth}`;
+  return `${startDay} ${startMonth} – ${endDay} ${endMonth}`;
+}
+
 export function scheduleLook(today: string, weekStart: string, weekEnd: string): "in-week" | "past" | "near" | "later" {
   if (today >= weekStart && today <= weekEnd) return "in-week";
   if (weekEnd < today) return "past";

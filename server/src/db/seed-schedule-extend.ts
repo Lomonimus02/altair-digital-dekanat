@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, ne } from "drizzle-orm";
 import { addDays, mondayOf, studyWeek, weekdayIndex } from "../../../shared/src/dates";
 import { getDb, getPool } from "./client";
 import { announcements, assignments, notifications, scheduleItems, users } from "./schema";
@@ -83,9 +83,11 @@ export async function extendSchedule() {
     monday = addDays(monday, 7);
     weekIndex += 1;
   }
+  await backfillMovedTargets();
+  await unifyLawItTeacher();
   await insertHomework();
   await insertAnnouncements();
-  console.log("Расписание продлено до 31 декабря, существующие строки не менялись.");
+  console.log("Расписание продлено до 31 декабря. Оценки и сдачи не менялись. Переносы дополнены пятницей.");
 }
 
 async function insertSlot(
@@ -101,6 +103,7 @@ async function insertSlot(
     .select({ id: scheduleItems.id })
     .from(scheduleItems)
     .where(and(eq(scheduleItems.groupName, groupName), eq(scheduleItems.date, date), eq(scheduleItems.pairNumber, slot.pair)))
+    .orderBy(asc(scheduleItems.id))
     .limit(1);
   if (existing[0]) return false;
   const time = PAIRS.find((pair) => pair.pair === slot.pair);
@@ -144,15 +147,65 @@ async function insertWeekChange(groupName: string, week: string[], weekIndex: nu
   await insertSlot(groupName, thursday, slot, kind, CHANGE_NOTES[kind], slot.room);
 }
 
+async function backfillMovedTargets() {
+  const db = getDb();
+  const moved = await db.select().from(scheduleItems).where(eq(scheduleItems.changeType, "moved")).orderBy(asc(scheduleItems.id));
+  for (const row of moved) {
+    const note = (row.changeNote ?? "").toLowerCase();
+    if (!note.includes("пятниц") || note.startsWith("перенесено с")) continue;
+    const friday = addDays(row.date, 1);
+    if (weekdayIndex(friday) !== 5 || friday > END) continue;
+    const sameDay = await db
+      .select()
+      .from(scheduleItems)
+      .where(and(eq(scheduleItems.groupName, row.groupName), eq(scheduleItems.date, friday)))
+      .orderBy(asc(scheduleItems.pairNumber), asc(scheduleItems.id));
+    const already = sameDay.find((item) => item.discipline === row.discipline && (item.changeNote ?? "").toLowerCase().startsWith("перенесено с"));
+    if (already) continue;
+    const used = new Set(sameDay.map((item) => item.pairNumber));
+    const pair = [3, 4, 1, 2].find((number) => !used.has(number));
+    const time = PAIRS.find((item) => item.pair === pair);
+    if (!pair || !time) continue;
+    await db.insert(scheduleItems).values({
+      groupName: row.groupName,
+      date: friday,
+      startsAt: pair === 3 ? "13:00" : time.start,
+      endsAt: pair === 3 ? "14:30" : time.end,
+      discipline: row.discipline,
+      kind: row.kind,
+      room: "314",
+      teacher: row.teacher,
+      changeType: "moved",
+      changeNote: `Перенесено с четверга, ${Number(row.date.slice(8))}.${row.date.slice(5, 7)}`,
+      pairNumber: pair,
+    });
+  }
+}
+
+async function unifyLawItTeacher() {
+  const db = getDb();
+  await db
+    .update(scheduleItems)
+    .set({ teacher: "доц. Орлов П. Н." })
+    .where(
+      and(
+        eq(scheduleItems.groupName, "ЮР-1-26-02"),
+        eq(scheduleItems.discipline, "Информационные технологии в юридической деятельности"),
+        ne(scheduleItems.teacher, "доц. Орлов П. Н."),
+      ),
+    );
+}
+
 async function insertHomework() {
   const db = getDb();
-  const teacher = (await db.select().from(users).where(eq(users.login, "orlov.pn")).limit(1))[0];
+  const teacher = (await db.select().from(users).where(eq(users.login, "orlov.pn")).orderBy(asc(users.id)).limit(1))[0];
   if (!teacher) return;
   for (const item of HOMEWORK) {
     const existing = await db
       .select({ id: assignments.id })
       .from(assignments)
       .where(and(eq(assignments.groupName, item.groupName), eq(assignments.title, item.title)))
+      .orderBy(asc(assignments.id))
       .limit(1);
     if (existing[0]) continue;
     await db.insert(assignments).values({
@@ -171,18 +224,19 @@ async function insertHomework() {
 
 async function insertAnnouncements() {
   const db = getDb();
-  const staff = (await db.select().from(users).where(eq(users.login, "lebedeva.ip")).limit(1))[0];
+  const staff = (await db.select().from(users).where(eq(users.login, "lebedeva.ip")).orderBy(asc(users.id)).limit(1))[0];
   if (!staff) return;
   for (const item of NEWS) {
-    const existing = await db.select({ id: announcements.id }).from(announcements).where(eq(announcements.title, item.title)).limit(1);
+    const existing = await db.select({ id: announcements.id }).from(announcements).where(eq(announcements.title, item.title)).orderBy(asc(announcements.id)).limit(1);
     if (existing[0]) continue;
     await db.insert(announcements).values({ authorId: staff.id, title: item.title, body: item.body });
-    const students = await db.select().from(users).where(eq(users.role, "student"));
+    const students = await db.select().from(users).where(eq(users.role, "student")).orderBy(asc(users.login), asc(users.id));
     for (const student of students) {
       const sent = await db
         .select({ id: notifications.id })
         .from(notifications)
         .where(and(eq(notifications.userId, student.id), eq(notifications.title, item.title)))
+        .orderBy(asc(notifications.id))
         .limit(1);
       if (sent[0]) continue;
       await db.insert(notifications).values({

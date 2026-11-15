@@ -245,7 +245,7 @@ export async function buildApp() {
 
     scope.get("/api/schedule", async (request) => {
       const user = request.user!;
-      if (user.role !== "student") throw new HttpError(403, "forbidden", "Расписание есть в кабинете студента");
+      if (user.role !== "student" && user.role !== "teacher") throw new HttpError(403, "forbidden", "Расписание есть в кабинете студента и преподавателя");
       const query = request.query as { date?: string; when?: string; weekOffset?: string };
       const today = moscowToday();
       let focus = today;

@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { academicPeriod, addDays, moscowToday, weekdayIndex } from "../../../shared/src/dates";
 import { hashPassword } from "../auth/crypto";
 import { getDb, getPool } from "./client";
@@ -9,6 +9,11 @@ const TEACHER = {
   password: "Altair-teacher-58",
   fullName: "Орлов Пётр Николаевич",
   institute: "Институт цифровых систем",
+};
+
+const DEMO_STUDENT: Record<string, string> = {
+  "БИ-3-26-04": "sorokin.mo",
+  "ЮР-1-26-02": "volkova.as",
 };
 
 const LOAD = [
@@ -24,7 +29,12 @@ function nextFriday(today: string) {
 
 async function notifyOnce(userId: number, title: string, body: string, href: string) {
   const db = getDb();
-  const existing = await db.select({ id: notifications.id }).from(notifications).where(and(eq(notifications.userId, userId), eq(notifications.title, title))).limit(1);
+  const existing = await db
+    .select({ id: notifications.id })
+    .from(notifications)
+    .where(and(eq(notifications.userId, userId), eq(notifications.title, title)))
+    .orderBy(asc(notifications.id))
+    .limit(1);
   if (existing[0]) return;
   await db.insert(notifications).values({ userId, kind: "homework", title, body, href });
 }
@@ -34,7 +44,7 @@ export async function seedHomework() {
   const today = moscowToday();
   await db.update(scheduleItems).set({ teacher: "доц. Орлов П. Н." }).where(eq(scheduleItems.teacher, "доц. Орлов П. С."));
 
-  let teacher = (await db.select().from(users).where(eq(users.login, TEACHER.login)).limit(1))[0];
+  let teacher = (await db.select().from(users).where(eq(users.login, TEACHER.login)).orderBy(asc(users.id)).limit(1))[0];
   if (!teacher) {
     const [created] = await db
       .insert(users)
@@ -56,15 +66,21 @@ export async function seedHomework() {
       .select({ id: teachingLoad.id })
       .from(teachingLoad)
       .where(and(eq(teachingLoad.teacherId, teacher.id), eq(teachingLoad.groupName, row.groupName), eq(teachingLoad.discipline, row.discipline)))
+      .orderBy(asc(teachingLoad.id))
       .limit(1);
     if (!exists[0]) await db.insert(teachingLoad).values({ teacherId: teacher.id, groupName: row.groupName, discipline: row.discipline });
   }
 
-  const students = await db.select().from(users).where(eq(users.role, "student"));
-  const byGroup = (group: string) => students.find((row) => row.groupName === group);
+  const students = await db.select().from(users).where(eq(users.role, "student")).orderBy(asc(users.login), asc(users.id));
+  const byGroup = (group: string) => students.find((row) => row.login === DEMO_STUDENT[group]);
 
   const lesson = async (group: string, discipline: string) => {
-    const rows = await db.select().from(scheduleItems).where(and(eq(scheduleItems.groupName, group), eq(scheduleItems.discipline, discipline))).limit(1);
+    const rows = await db
+      .select()
+      .from(scheduleItems)
+      .where(and(eq(scheduleItems.groupName, group), eq(scheduleItems.discipline, discipline)))
+      .orderBy(asc(scheduleItems.date), asc(scheduleItems.pairNumber), asc(scheduleItems.id))
+      .limit(1);
     return rows[0]?.id ?? null;
   };
 
@@ -183,7 +199,12 @@ export async function seedHomework() {
     const student = byGroup(item.group);
     if (!student) continue;
     let assignment = (
-      await db.select().from(assignments).where(and(eq(assignments.groupName, item.group), eq(assignments.title, item.title))).limit(1)
+      await db
+        .select()
+        .from(assignments)
+        .where(and(eq(assignments.groupName, item.group), eq(assignments.title, item.title)))
+        .orderBy(asc(assignments.id))
+        .limit(1)
     )[0];
     if (!assignment) {
       const scheduleItemId = await lesson(item.group, item.discipline);
@@ -211,6 +232,7 @@ export async function seedHomework() {
       .select({ id: submissions.id })
       .from(submissions)
       .where(and(eq(submissions.assignmentId, assignment.id), eq(submissions.studentId, student.id)))
+      .orderBy(asc(submissions.id))
       .limit(1);
     if (!existing[0]) {
       await db.insert(submissions).values({
@@ -253,12 +275,12 @@ async function seedClassmates(today: string) {
   };
   const passwordHash = await hashPassword("Altair-classmate-1");
   for (const [group, pack] of Object.entries(groups)) {
-    const assignment = (await db.select().from(assignments).where(eq(assignments.groupName, group)).limit(1))[0];
+    const assignment = (await db.select().from(assignments).where(eq(assignments.groupName, group)).orderBy(asc(assignments.id)).limit(1))[0];
     let index = 1;
     for (const fullName of pack.names) {
       const login = `${group.startsWith("Б") ? "bi" : "jur"}.${String(index).padStart(2, "0")}`;
       index += 1;
-      let person = (await db.select().from(users).where(eq(users.login, login)).limit(1))[0];
+      let person = (await db.select().from(users).where(eq(users.login, login)).orderBy(asc(users.id)).limit(1))[0];
       if (!person) {
         const [created] = await db.insert(users).values({
           login,
@@ -273,7 +295,14 @@ async function seedClassmates(today: string) {
         }).returning();
         person = created;
       }
-      const subject = (await db.select().from(disciplines).where(and(eq(disciplines.studentId, person.id), eq(disciplines.name, pack.discipline))).limit(1))[0];
+      const subject = (
+        await db
+          .select()
+          .from(disciplines)
+          .where(and(eq(disciplines.studentId, person.id), eq(disciplines.name, pack.discipline)))
+          .orderBy(asc(disciplines.id))
+          .limit(1)
+      )[0];
       let disciplineId = subject?.id;
       if (!disciplineId) {
         const [created] = await db.insert(disciplines).values({
@@ -288,12 +317,23 @@ async function seedClassmates(today: string) {
         disciplineId = created.id;
         await db.insert(marks).values({ disciplineId, studentId: person.id, label: "Семинар", value: 4, kind: "current", awardedOn: addDays(today, -10) });
       }
-      const visit = await db.select({ id: attendance.id }).from(attendance).where(and(eq(attendance.studentId, person.id), eq(attendance.lessonDate, addDays(today, -2)))).limit(1);
+      const visit = await db
+        .select({ id: attendance.id })
+        .from(attendance)
+        .where(and(eq(attendance.studentId, person.id), eq(attendance.lessonDate, addDays(today, -2))))
+        .orderBy(asc(attendance.id))
+        .limit(1);
       if (!visit[0]) {
-        await db.insert(attendance).values({ teacherId: (await db.select().from(users).where(eq(users.login, "orlov.pn")).limit(1))[0].id, studentId: person.id, groupName: group, discipline: pack.discipline, lessonDate: addDays(today, -2), present: index % 4 !== 0 });
+        const teacher = (await db.select().from(users).where(eq(users.login, "orlov.pn")).orderBy(asc(users.id)).limit(1))[0];
+        await db.insert(attendance).values({ teacherId: teacher.id, studentId: person.id, groupName: group, discipline: pack.discipline, lessonDate: addDays(today, -2), present: index % 4 !== 0 });
       }
       if (assignment && index % 3 === 0) {
-        const sent = await db.select({ id: submissions.id }).from(submissions).where(and(eq(submissions.assignmentId, assignment.id), eq(submissions.studentId, person.id))).limit(1);
+        const sent = await db
+          .select({ id: submissions.id })
+          .from(submissions)
+          .where(and(eq(submissions.assignmentId, assignment.id), eq(submissions.studentId, person.id)))
+          .orderBy(asc(submissions.id))
+          .limit(1);
         if (!sent[0]) {
           await db.insert(submissions).values({ assignmentId: assignment.id, studentId: person.id, status: "in_review", body: "Черновик одногруппника.", links: [] });
         }

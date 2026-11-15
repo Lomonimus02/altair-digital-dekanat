@@ -1,6 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { CHANGE_LABEL, KIND_LABEL, type LessonView } from "@shared/domain";
-import { scheduleLook } from "@shared/dates";
+import { formatWeekSpan, scheduleLook } from "@shared/dates";
+import { useAuth } from "../lib/auth";
 import { Star } from "lucide-react";
 import { useRef } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -112,10 +113,7 @@ export function SchedulePage() {
 
 function weekLabel(days: { date: string }[]) {
   if (!days.length) return "";
-  const start = new Date(`${days[0].date}T12:00:00Z`);
-  const end = new Date(`${days[days.length - 1].date}T12:00:00Z`);
-  const month = end.toLocaleDateString("ru-RU", { month: "long", timeZone: "UTC" });
-  return `${start.getUTCDate()}–${end.getUTCDate()} ${month}`;
+  return formatWeekSpan(days[0].date, days[days.length - 1].date);
 }
 
 function shortDay(name: string) {
@@ -137,7 +135,9 @@ function DayCard({ day, today }: { day?: { date: string; weekday: string; items:
 
 function Lesson({ lesson }: { lesson: LessonView }) {
   const run = useAction();
+  const { user } = useAuth();
   const tone = lesson.changeType === "cancelled" ? "high" : lesson.changeType === "none" ? "low" : "mid";
+  const who = user?.role === "teacher" ? lesson.groupName : lesson.teacher;
   return (
     <article className={`border-t border-white/40 py-3 first:border-0 ${lesson.changeType === "cancelled" ? "opacity-70" : ""}`} data-agent-target={`lesson-${lesson.id}`}>
       <div className="flex items-start gap-3">
@@ -147,17 +147,19 @@ function Lesson({ lesson }: { lesson: LessonView }) {
             <h3 className="font-semibold">{lesson.discipline}</h3>
             {lesson.changeType !== "none" ? <Pill tone={tone}>{CHANGE_LABEL[lesson.changeType]}</Pill> : null}
           </div>
-          <p className="text-sm text-[var(--muted)]">{KIND_LABEL[lesson.kind]} · ауд. {lesson.room} · {lesson.teacher}</p>
+          <p className="text-sm text-[var(--muted)]">{KIND_LABEL[lesson.kind]} · ауд. {lesson.room}{who ? ` · ${who}` : ""}</p>
           {lesson.changeNote ? <p className="mt-1 text-sm">{lesson.changeNote}</p> : null}
         </div>
-        <button
-          className="btn btn-quiet h-11 w-11 shrink-0 px-0"
-          aria-label={lesson.flagged ? "Снять отметку" : "Отметить занятие"}
-          aria-pressed={lesson.flagged}
-          onClick={() => void run("mark_schedule_item", { scheduleItemId: lesson.id, flagged: !lesson.flagged })}
-        >
-          <Star className="h-4 w-4" fill={lesson.flagged ? "currentColor" : "none"} />
-        </button>
+        {user?.role === "teacher" ? null : (
+          <button
+            className="btn btn-quiet h-11 w-11 shrink-0 px-0"
+            aria-label={lesson.flagged ? "Снять отметку" : "Отметить занятие"}
+            aria-pressed={lesson.flagged}
+            onClick={() => void run("mark_schedule_item", { scheduleItemId: lesson.id, flagged: !lesson.flagged })}
+          >
+            <Star className="h-4 w-4" fill={lesson.flagged ? "currentColor" : "none"} />
+          </button>
+        )}
       </div>
     </article>
   );

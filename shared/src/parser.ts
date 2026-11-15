@@ -240,6 +240,7 @@ function parseTeacher(t: string, raw: string): Proposal | null {
       ...(discipline ? { subject: discipline } : {}),
     });
   }
+  if (/расписан|недел/.test(t)) return step("Смотрю расписание.", "get_schedule", { when: detectWhen(t) });
   return null;
 }
 

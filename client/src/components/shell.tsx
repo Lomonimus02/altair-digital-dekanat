@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Bell, CalendarDays, FileText, GraduationCap, House, Inbox, LogOut, Megaphone, Menu, Moon, ScrollText, Sparkles, Sun, UserRound } from "lucide-react";
+import { Bell, CalendarDays, ClipboardList, FileText, GraduationCap, House, Inbox, LogOut, Megaphone, Menu, Moon, ScrollText, Sparkles, Sun, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
@@ -64,6 +64,10 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
   }, [queryClient]);
 
   useEffect(() => {
+    if (user?.role === "teacher") {
+      void queryClient.prefetchQuery({ queryKey: ["schedule", "", "", ""], queryFn: () => api("/api/schedule?when=today") });
+      return;
+    }
     if (user?.role !== "student") return;
     void queryClient.prefetchQuery({ queryKey: ["schedule", "", "", ""], queryFn: () => api("/api/schedule?when=today") });
     void queryClient.prefetchQuery({ queryKey: ["grades", ""], queryFn: () => api("/api/grades") });
@@ -75,9 +79,10 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
   const links = teacher
     ? [
         { to: "/teach", label: "Сегодня", icon: House, end: true },
+        { to: "/schedule", label: "Расписание", short: "Пары", icon: CalendarDays },
         { to: "/teach/journal", label: "Журнал", icon: GraduationCap },
         { to: "/teach/homework", label: "Проверка", icon: FileText },
-        { to: "/teach/assign", label: "Задание", icon: CalendarDays },
+        { to: "/teach/assign", label: "Задание", icon: ClipboardList },
         { to: "/teach/announce", label: "Группы", icon: Megaphone },
         { to: "/notifications", label: "Уведомления", icon: Bell, badge: unread },
         { to: "/profile", label: "Профиль", icon: UserRound },

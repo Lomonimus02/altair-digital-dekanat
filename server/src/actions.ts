@@ -404,7 +404,8 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
     const page = String(args.page);
     if (page.startsWith("staff") && user.role !== "staff") return { summary: "Раздел учебного офиса вам недоступен." };
     if (page.startsWith("teach") && user.role !== "teacher") return { summary: "Журнал и задания ведёт преподаватель." };
-    if (user.role !== "student" && ["schedule", "grades", "requests", "request", "new_request", "homework"].includes(page)) {
+    if (page === "schedule" && user.role === "staff") return { summary: "Расписание есть в кабинете студента и преподавателя." };
+    if (user.role !== "student" && ["grades", "requests", "request", "new_request", "homework"].includes(page)) {
       return { summary: "Этот раздел есть в кабинете студента." };
     }
     const built = await buildPageTarget(user, args);
@@ -493,13 +494,20 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
     const data = await loadSchedule(user, resolved.focus, true);
     const mode = when === "today" || when === "tomorrow" || when === "day_after" ? "day" : "week";
     const pool = mode === "day" ? data.items.filter((item) => item.date === resolved.focus) : data.items.filter((item) => item.changeType !== "cancelled");
-    const shown = pool.slice(0, 8);
-    const summary = `${resolved.sundayNote ? "Сегодня воскресенье. " : ""}${resolved.label}: ${pool.length ? ruCount(pool.length, "занятие", "занятия", "занятий") : "занятий нет."}`;
+    const shown = pool.slice(0, user.role === "teacher" ? 12 : 8);
+    const lessonLine = (item: (typeof shown)[number]) =>
+      user.role === "teacher"
+        ? `${item.startsAt} ${item.discipline}, ${item.groupName ?? "группа"}`
+        : `${item.discipline}${item.room ? ` · ${item.room}` : ""}`;
+    const summary =
+      user.role === "teacher"
+        ? `${resolved.sundayNote ? "Сегодня воскресенье. " : ""}${resolved.label}: ${pool.length ? pool.slice(0, 8).map((item) => `${item.startsAt} ${item.discipline}, ${item.groupName ?? ""}`).join("; ") : "занятий нет."}`
+        : `${resolved.sundayNote ? "Сегодня воскресенье. " : ""}${resolved.label}: ${pool.length ? ruCount(pool.length, "занятие", "занятия", "занятий") : "занятий нет."}`;
     return {
       summary,
       card: {
         title: resolved.label,
-        rows: shown.map((item) => ({ label: `${item.startsAt}–${item.endsAt}`, value: `${item.discipline}${item.room ? ` · ${item.room}` : ""}` })),
+        rows: shown.map((item) => ({ label: `${item.startsAt}–${item.endsAt}`, value: lessonLine(item) })),
       },
       ui: [{ type: "navigate", to: `/schedule?date=${resolved.focus}`, highlight: `schedule-day-${resolved.focus}` }],
     };

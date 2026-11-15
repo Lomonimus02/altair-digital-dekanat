@@ -28,7 +28,7 @@ export function App() {
         <Route path="/verify/:code" element={<VerifyPage />} />
         <Route element={<RequireAuth />}>
           <Route path="/" element={<StudentGate><DashboardPage /></StudentGate>} />
-          <Route path="/schedule" element={<StudentGate><SchedulePage /></StudentGate>} />
+          <Route path="/schedule" element={<LearnerGate><SchedulePage /></LearnerGate>} />
           <Route path="/grades" element={<StudentGate><GradesPage /></StudentGate>} />
           <Route path="/homework" element={<StudentGate><HomeworkPage /></StudentGate>} />
           <Route path="/homework/:id" element={<StudentGate><HomeworkDetail /></StudentGate>} />
@@ -59,6 +59,12 @@ export function App() {
 function StaffGate({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   if (user && user.role !== "staff") return <Navigate to={user.role === "teacher" ? "/teach" : "/"} replace />;
+  return children;
+}
+
+function LearnerGate({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  if (user?.role === "staff") return <Navigate to="/staff" replace />;
   return children;
 }
 
