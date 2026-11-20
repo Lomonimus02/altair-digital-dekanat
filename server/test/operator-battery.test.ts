@@ -133,8 +133,9 @@ it("исправленные команды доходят до карточки
 
   const volkova = await login("volkova.as", "Altair-student-17");
   const star = await turn(volkova, "отметь пару по конституционному праву в понедельник");
-  expect(star.say).toMatch(/Отметил/);
-  expect(star.say.toLowerCase()).toMatch(/конституц/);
+  expect(star.say.toLowerCase()).toMatch(/нет/);
+  expect(star.choices?.length).toBeGreaterThan(0);
+  expect(star.say).not.toMatch(/^Отметил/);
 });
 
 it("заявка заполняется и создаётся только после подтверждения", async () => {
@@ -174,6 +175,7 @@ async function turn(session: { cookie: string; csrf: string }, message: string) 
     open?: string;
     confirm?: { pendingId: string; fields: { label: string; value: string }[] };
     ui?: { type: string; to?: string }[];
+    choices?: { label: string }[];
   };
 }
 

@@ -60,7 +60,7 @@ export function SchedulePage() {
   const look = scheduleLook(schedule.data.today, weekStart, weekEnd);
   const focusDay = schedule.data.days[index];
   return (
-    <div className="space-y-4">
+    <div className="stagger space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <h1>Расписание</h1>

@@ -15,7 +15,7 @@ export function NotificationsPage() {
   if (notes.error) return <ErrorState text="Уведомления не загрузились" onRetry={() => void notes.refetch()} />;
   const items = notes.data?.notifications ?? [];
   return (
-    <div className="space-y-3" data-agent-target="notifications">
+    <div className="stagger space-y-3" data-agent-target="notifications">
       <div className="sticky top-0 z-20 flex min-w-0 flex-wrap items-center justify-between gap-2 bg-[var(--bg,transparent)] py-1">
         <h1 className="min-w-0">Уведомления</h1>
         <Button className="h-11 shrink-0 whitespace-nowrap px-4" variant="glass" data-agent-action="notification-read-all" onClick={() => void run("mark_notifications_read", { all: true })}>Прочитать все</Button>
@@ -27,9 +27,7 @@ export function NotificationsPage() {
               <h2 className="truncate font-semibold">{note.title}</h2>
               <p className="mt-1 line-clamp-2 text-sm text-[var(--muted)]">{note.body}</p>
             </div>
-            {!note.readAt ? (
-              <button type="button" className="btn btn-quiet h-11 shrink-0 px-3" data-agent-action="notification-read" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void run("mark_notifications_read", { ids: [note.id] }); }}>Прочитано</button>
-            ) : null}
+            {!note.readAt ? <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-[var(--brand)]" aria-label="Не прочитано" /> : null}
           </div>
         );
         return (
@@ -46,13 +44,18 @@ function SwipeNote({ children, onRead }: { children: ReactNode; onRead: () => vo
   const [x, setX] = useState(0);
   const start = useRef(0);
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const layer = useRef<HTMLDivElement>(null);
+  const open = x < -8;
+  useEffect(() => {
+    if (layer.current) layer.current.inert = !open;
+  }, [open]);
   return (
     <div className="relative overflow-hidden rounded-[1.75rem]">
-      <div className="absolute inset-y-0 right-0 flex w-28 items-stretch">
-        <button type="button" className="w-full bg-[var(--primary)] text-sm font-semibold text-[var(--primary-ink)]" data-agent-action="notification-read" onClick={onRead}>Прочитано</button>
+      <div ref={layer} className="absolute inset-y-0 right-0 flex w-28 items-stretch" style={{ opacity: open ? 1 : 0, visibility: open ? "visible" : "hidden" }} aria-hidden={open ? undefined : true}>
+        <button type="button" className="w-full bg-[var(--primary)] text-sm font-semibold text-[var(--primary-ink)]" tabIndex={open ? 0 : -1} data-agent-action="notification-read" onClick={onRead}>Прочитано</button>
       </div>
       <div
-        className="relative"
+        className="note-card relative"
         style={{ transform: `translateX(${x}px)`, transition: reduced ? "none" : "transform 180ms ease" }}
         onTouchStart={(event) => { start.current = event.touches[0]?.clientX ?? 0; }}
         onTouchMove={(event) => {
@@ -253,8 +256,10 @@ export function StaffRequestPage() {
         <p className="mt-2 text-sm text-[var(--muted)]">{detail.data.request.body}</p>
       </Glass>
       <Glass>
-        <h2 className="font-display text-lg">Ответ</h2>
-        <textarea className="field mt-3 min-h-28 py-3" value={comment || triage.suggestedReply} onChange={(event) => setComment(event.target.value)} />
+        <label className="mt-3 block text-sm font-semibold" htmlFor={`staff-reply-${id}`}>
+          Комментарий к ответу
+          <textarea id={`staff-reply-${id}`} className="field mt-1 min-h-28 py-3" value={comment || triage.suggestedReply} onChange={(event) => setComment(event.target.value)} />
+        </label>
         <div className="mt-3 space-y-3">
           <Choice label="Статус" value={status} options={[{ value: "in_progress", label: "В работе" }, { value: "ready", label: "Готова" }, { value: "issued", label: "Выдана" }, { value: "rejected", label: "Отклонена" }]} onChange={setStatus} />
           <Button onClick={() => {

@@ -54,6 +54,8 @@ interface AgentValue {
   inputRef: RefObject<HTMLTextAreaElement | null>;
   operator: string | null;
   stop: () => void;
+  canClear: boolean;
+  clearForm: () => void;
 }
 
 const AgentContext = createContext<AgentValue | null>(null);
@@ -92,6 +94,7 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [operator, setOperator] = useState<string | null>(null);
+  const [canClear, setCanClear] = useState(false);
   const config = useQuery({ queryKey: ["agent-config"], queryFn: () => api<{ serverModel: boolean }>("/api/agent/config") });
 
   useEffect(() => {
@@ -168,6 +171,7 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
         tools,
         open: response.open ?? navigateTo?.to,
         fields: response.confirm?.fields ?? [],
+        fill: response.fill,
         navigate,
         signal: abort.signal,
         onStep: (label) => {
@@ -183,6 +187,9 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
           await api("/api/agent/reject", { method: "POST", body: JSON.stringify({ pendingId: response.confirm.pendingId }) }).catch(() => undefined);
         }
         toast("Остановлено");
+        setPeekLine("Остановлено");
+        setPeek(true);
+        setCanClear(true);
         setMessages((current) => [...current, { id: rid(), role: "agent", text: "Остановлено. Ничего не отправил." }]);
         return;
       }
@@ -359,6 +366,16 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
     setUseServer,
     inputRef,
     operator,
+    canClear,
+    clearForm: () => {
+      for (const field of ["purpose", "comment", "kind", "homework-body", "title", "description", "deadline", "group", "discipline", "announce-title", "announce-body"]) {
+        window.dispatchEvent(new CustomEvent("altair-fill", { detail: { field, value: "" } }));
+      }
+      setCanClear(false);
+      setPeekLine("");
+      setPeek(false);
+      toast("Форма очищена");
+    },
     stop: () => {
       abortRef.current?.abort();
       setOperator(null);
@@ -419,6 +436,7 @@ interface Turn {
   choices?: ChoiceChip[];
   link?: { to: string; label: string };
   open?: string;
+  fill?: Record<string, string>;
 }
 
 interface ActionResult {

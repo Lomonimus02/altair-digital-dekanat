@@ -402,13 +402,26 @@ function subjectHit(query: string, discipline: string, names: string[]) {
   return d.includes(q) || q.includes(d.slice(0, 5));
 }
 
+function stems(value: string) {
+  return value.toLowerCase().replace(/ё/g, "е").split(/[^a-zа-я0-9]+/).filter((word) => word.length >= 4).map((word) => word.slice(0, 6));
+}
+
+export function titleHit(query: string, title: string, id: number) {
+  const q = query.toLowerCase().replace(/ё/g, "е");
+  if (q.includes(String(id)) && /№|#|\b\d+\b/.test(q)) return true;
+  const left = stems(query);
+  const right = stems(title);
+  return left.some((token) => right.some((word) => word.startsWith(token) || token.startsWith(word)));
+}
+
 export async function resolveStudentAssignment(user: PublicUser, subject: string) {
   const rows = await listStudentHomework(user);
   const names = [...new Set(rows.map((row) => row.discipline))];
   const q = subject.toLowerCase().replace(/ё/g, "е");
   const matches = rows.filter((row) => {
-    if (q.includes("лаб")) return row.kind === "lab" && subjectHit(subject, row.discipline, names);
-    return subjectHit(subject, row.discipline, names) || row.title.toLowerCase().includes(q);
+    const byTitle = titleHit(subject, row.title, row.id);
+    if (q.includes("лаб") && !byTitle) return row.kind === "lab" && (subjectHit(subject, row.discipline, names) || byTitle);
+    return subjectHit(subject, row.discipline, names) || byTitle || row.title.toLowerCase().includes(q);
   });
   const submittable = matches.filter((row) => ["not_started", "in_progress", "returned"].includes(row.submission.status));
   if (!submittable.length) {

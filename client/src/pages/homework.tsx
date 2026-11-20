@@ -65,7 +65,7 @@ export function HomeworkPage() {
   if (list.error) return <ErrorState text="Задания не загрузились" onRetry={() => void list.refetch()} />;
   const groups = ["Просрочено", "Сегодня", "Завтра", "На неделе", "Позже", "Сдано"].filter((name) => rows.some((work) => groupLabel(work, today) === name));
   return (
-    <div className="space-y-4" data-agent-target="homework">
+    <div className="stagger space-y-4" data-agent-target="homework">
       <h1>Задания</h1>
       <div className="grid grid-cols-4 gap-2">
         {FILTERS.map(([id, label]) => (

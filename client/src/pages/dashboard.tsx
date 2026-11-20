@@ -45,7 +45,7 @@ export function DashboardPage() {
   const unread = dedupeNotes((notes.data?.notifications ?? []).filter((note) => !note.readAt)).slice(0, 3);
 
   return (
-    <div className="space-y-4">
+    <div className="stagger space-y-4">
       <header className="min-w-0">
         <h1 className="truncate">Панель управления</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">{user?.addressName}</p>
@@ -119,7 +119,7 @@ function StaffHome() {
         <p className="text-sm text-[var(--muted)]">Новых заявок: {fresh.length}. Агент может разобрать входящие и подсказать ответ.</p>
         <button className="btn btn-primary mt-3" onClick={() => void agent.send("Разбери входящие")}>Разобрать с агентом</button>
       </Glass>
-      <div className="space-y-3">
+      <div className="stagger space-y-3">
         {[...(inbox.data?.requests ?? [])].filter((row) => !status || row.status === status).sort((a, b) => Number(b.status === "submitted") - Number(a.status === "submitted")).slice(0, 6).map((row) => (
           <Link key={row.id} to={`/staff/requests/${row.id}`} className="liquid-glass block">
             <div className="glass-pad p-4">

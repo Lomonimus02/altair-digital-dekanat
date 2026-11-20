@@ -60,11 +60,14 @@ export async function playTurn(input: {
   tools: string[];
   open?: string;
   fields: { label: string; value: string }[];
+  fill?: Record<string, string>;
   navigate: (to: string) => void;
   signal: AbortSignal;
   onStep: (label: string) => void;
 }) {
-  const { tools, open, fields, navigate, signal, onStep } = input;
+  const { tools, open, fields, fill, navigate, signal, onStep } = input;
+  onStep(tools[0] ? "Открываю раздел…" : "Смотрю…");
+  await wait(480, signal);
   const selector =
     tools.includes("update_settings") ? "[data-agent-action='theme-toggle']"
     : tools.includes("mark_schedule_item") ? "[data-agent-action='schedule-star']"
@@ -90,15 +93,13 @@ export async function playTurn(input: {
   const form = tools.find((tool) => ["create_request", "submit_homework", "teacher_issue_assignment", "staff_publish_announcement"].includes(tool));
   if (form) {
     onStep("Заполняю форму…");
-    for (const field of fields) {
-      const name = form === "submit_homework"
-        ? (field.label === "Комментарий" || field.label === "Текст" ? "homework-body" : "")
-        : form === "staff_publish_announcement"
-          ? (field.label === "Заголовок" || field.label === "Название" ? "announce-title" : field.label === "Текст" || field.label === "Комментарий" ? "announce-body" : "")
-          : FIELD[field.label] ?? "";
-      if (!name || !field.value) continue;
+    const pairs = fill && Object.keys(fill).length
+      ? Object.entries(fill)
+      : fields.map((field) => [FIELD[field.label] ?? "", field.value] as const);
+    for (const [name, value] of pairs) {
+      if (!name || !value) continue;
       await glideTo(`[data-agent-field='${name}']`, signal);
-      await typeField(name, field.value, signal);
+      await typeField(name, value, signal);
     }
     const submit = form === "create_request" ? "request-submit" : form === "submit_homework" ? "homework-submit" : form === "teacher_issue_assignment" ? "teach-issue" : "staff-publish";
     await glideTo(`[data-agent-action='${submit}']`, signal);

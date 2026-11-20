@@ -18,6 +18,7 @@ import {
   type UiDirective,
   type UndoPayload,
 } from "../../shared/src/domain";
+import { formFill } from "../../shared/src/form-fill";
 import { analyzeSession, withHypothetical } from "../../shared/src/navigator";
 import { composeBrief, narrateAdvice, narrateOverview, narrateWeekSchedule, weekCardRows } from "../../shared/src/narrate";
 import { samePerson } from "../../shared/src/names";
@@ -118,6 +119,7 @@ export interface PerformResult extends Outcome {
   confirm?: ConfirmCard;
   auditId?: number;
   undoOffer?: { auditId: number; label: string };
+  fill?: Record<string, string>;
 }
 
 const NEXT: Record<string, RequestStatus[]> = {
@@ -229,7 +231,7 @@ export async function perform(
       });
     await writeAudit(user, ctx.source, def.name, args, `Ждёт подтверждения: ${preview.title}`, false, null);
     const guide = guideFor(def.name, args);
-    return { ok: true, summary: "Нужно ваше подтверждение.", ui: guide ? [{ type: "navigate", to: guide, highlight: "form" }] : [], confirm: { pendingId, ...preview } };
+    return { ok: true, summary: "Нужно ваше подтверждение.", ui: guide ? [{ type: "navigate", to: guide, highlight: "form" }] : [], confirm: { pendingId, ...preview }, fill: formFill(def.name, args) };
   }
 
   const handler = handlers[def.name];
@@ -699,7 +701,17 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
     };
   },
   async mark_schedule_item(user, args) {
-    const item = await resolveLesson(user, args);
+    const found = await resolveLesson(user, args);
+    if ("missingDay" in found) {
+      const clarificationId = await saveClarification(user.id, "mark_schedule_item", args);
+      const day = formatRuDate(found.missingDay);
+      return {
+        summary: `В ${day} пары «${String(args.subject || found.options[0].discipline)}» нет. Ближайшая — ${formatRuDate(found.options[0].date)}, ${found.options[0].startsAt}. Отметить её?`,
+        choices: found.options.map((row) => ({ label: `${formatRuDate(row.date)}, ${row.startsAt} ${row.discipline}`, clarificationId, entityId: String(row.id) })),
+        card: { title: "Ближайшие пары", rows: found.options.map((row) => ({ label: formatRuDate(row.date), value: `${row.startsAt} ${row.discipline}` })) },
+      };
+    }
+    const item = found;
     const existing = await getDb()
       .select()
       .from(scheduleFlags)
@@ -1069,11 +1081,12 @@ async function resolveLesson(user: PublicUser, args: Record<string, unknown>) {
     .select()
     .from(scheduleItems)
     .where(and(eq(scheduleItems.groupName, user.groupName), gte(scheduleItems.date, week[0]), lte(scheduleItems.date, week[5])));
-  const sameDay = rows.filter((item) => item.date === focus);
-  const pool = sameDay.length ? sameDay : rows.filter((item) => item.date >= focus);
-  const row = pool.find((item) => item.discipline === subject) ?? pool.find((item) => item.discipline.toLowerCase().includes(subject.toLowerCase().slice(0, 8))) ?? rows.find((item) => item.discipline === subject);
-  if (!row) throw notFound("Занятие не найдено");
-  return row;
+  const hit = (item: { discipline: string }) => item.discipline === subject || item.discipline.toLowerCase().includes(subject.toLowerCase().slice(0, 8));
+  const exact = rows.find((item) => item.date === focus && hit(item));
+  if (exact) return exact;
+  const nearest = rows.filter((item) => hit(item) && item.date >= focus).sort((a, b) => a.date.localeCompare(b.date) || a.startsAt.localeCompare(b.startsAt));
+  if (!nearest.length) throw notFound("Занятие не найдено");
+  return { missingDay: focus, options: nearest.slice(0, 3) };
 }
 
 async function undoAudit(user: PublicUser, auditId: number): Promise<Outcome> {
@@ -1120,13 +1133,17 @@ async function undoAudit(user: PublicUser, auditId: number): Promise<Outcome> {
         .where(eq(submissions.id, undo.submissionId));
     }
   } else if (undo.type === "flag") {
-    await getDb()
-      .insert(scheduleFlags)
-      .values({ userId: user.id, scheduleItemId: undo.scheduleItemId, flagged: undo.flagged })
-      .onConflictDoUpdate({
-        target: [scheduleFlags.userId, scheduleFlags.scheduleItemId],
-        set: { flagged: undo.flagged },
-      });
+    if (!undo.flagged) {
+      await getDb().delete(scheduleFlags).where(and(eq(scheduleFlags.userId, user.id), eq(scheduleFlags.scheduleItemId, undo.scheduleItemId)));
+    } else {
+      await getDb()
+        .insert(scheduleFlags)
+        .values({ userId: user.id, scheduleItemId: undo.scheduleItemId, flagged: true })
+        .onConflictDoUpdate({
+          target: [scheduleFlags.userId, scheduleFlags.scheduleItemId],
+          set: { flagged: true },
+        });
+    }
   }
   await getDb().update(auditLog).set({ undoneAt: new Date().toISOString() }).where(eq(auditLog.id, row.id));
   const ui: UiDirective[] = [{ type: "invalidate", keys: ["me", "schedule", "notifications", "brief", "audit", "homework", "teach-assignment", "journal"] }];
@@ -1270,6 +1287,7 @@ export async function runTurn(
   choices?: ChoiceChip[];
   link?: { to: string; label: string };
   open?: string;
+  fill?: Record<string, string>;
 }> {
   let mode: "device" | "fallback" | "server" | "cloud" = "fallback";
   let caption = "Быстрый режим";
@@ -1316,6 +1334,7 @@ export async function runTurn(
   let citations: Citation[] | undefined;
   let download: { href: string; label: string } | undefined;
   let undo: { auditId: number; label: string } | undefined;
+  let fill: Record<string, string> | undefined;
   let stopped = false;
   for (const call of proposal.steps) {
     const label = stepLabel(call.tool, call.args);
@@ -1334,6 +1353,7 @@ export async function runTurn(
       if (result.choices?.length) choices = result.choices;
       if (result.confirm) {
         confirm = result.confirm;
+        fill = result.fill;
         stopped = true;
       }
     } catch (error) {
@@ -1348,7 +1368,7 @@ export async function runTurn(
   const nav = nextUi.find((item) => item.type === "navigate");
   if (nav && nav.type === "navigate") link = { to: nav.to, label: "На странице" };
   const open = nav && nav.type === "navigate" ? nav.to : undefined;
-  return { mode, caption, say, steps, ui: nextUi, confirm, citations, download, undo, cards, choices, link, open };
+  return { mode, caption, say, steps, ui: nextUi, confirm, citations, download, undo, cards, choices, link, open, fill };
 }
 
 const ACT_TOOLS = new Set([
@@ -1422,7 +1442,9 @@ export async function clarifyChoice(user: PublicUser, clarificationId: string, e
   if (new Date(row.expiresAt).getTime() < Date.now()) throw new HttpError(410, "expired", "Срок уточнения вышел. Повторите просьбу.");
   await getDb().delete(clarifications).where(eq(clarifications.id, clarificationId));
   const args = { ...(row.args as Record<string, unknown>) };
-  if (row.tool === "teacher_issue_assignment") {
+  if (row.tool === "mark_schedule_item") {
+    args.scheduleItemId = Number(entityId);
+  } else if (row.tool === "teacher_issue_assignment") {
     args.discipline = entityId;
   } else if (row.tool === "teacher_set_mark") {
     const [groupName, discipline] = entityId.split("||");

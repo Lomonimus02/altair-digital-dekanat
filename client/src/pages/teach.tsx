@@ -20,7 +20,7 @@ export function TeachHome() {
   if (home.error || !home.data) return <ErrorState text="Кабинет не загрузился" onRetry={() => void home.refetch()} />;
   const groups = [...new Set(home.data.groups.map((row) => row.groupName))];
   return (
-    <div className="space-y-4" data-agent-target="teach">
+    <div className="stagger space-y-4" data-agent-target="teach">
       <h1>Преподаватель</h1>
       <Glass>
         <div className="mb-1 flex items-center justify-between">
@@ -145,7 +145,7 @@ export function TeachQueue() {
   if (queue.error) return <ErrorState text="Очередь не загрузилась" onRetry={() => void queue.refetch()} />;
   const rows = queue.data?.queue ?? [];
   return (
-    <div className="space-y-3" data-agent-target="queue">
+    <div className="stagger space-y-3" data-agent-target="queue">
       <BackLink to="/teach" />
       <h1>На проверке</h1>
       {rows.length === 0 ? <EmptyState title="Очередь пуста" text="Сданных работ пока нет." /> : rows.slice(0, 12).map((row) => (

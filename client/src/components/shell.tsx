@@ -64,6 +64,8 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
     return () => source.close();
   }, [queryClient]);
 
+  const [pull, setPull] = useState(0);
+  const [refreshed, setRefreshed] = useState(false);
   useEffect(() => {
     let startY = 0;
     let pulling = false;
@@ -72,16 +74,28 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
       startY = event.touches[0]?.clientY ?? 0;
       pulling = true;
     };
-    const onEnd = (event: TouchEvent) => {
+    const onMove = (event: TouchEvent) => {
+      if (!pulling) return;
+      const next = Math.max(0, Math.min(96, (event.touches[0]?.clientY ?? startY) - startY));
+      setPull(next);
+    };
+    const onEnd = () => {
       if (!pulling) return;
       pulling = false;
-      const end = event.changedTouches[0]?.clientY ?? startY;
-      if (end - startY > 72) void queryClient.invalidateQueries();
+      setPull((current) => {
+        if (current > 72) {
+          setRefreshed(true);
+          void queryClient.invalidateQueries().finally(() => window.setTimeout(() => setRefreshed(false), 700));
+        }
+        return 0;
+      });
     };
     window.addEventListener("touchstart", onStart, { passive: true });
+    window.addEventListener("touchmove", onMove, { passive: true });
     window.addEventListener("touchend", onEnd);
     return () => {
       window.removeEventListener("touchstart", onStart);
+      window.removeEventListener("touchmove", onMove);
       window.removeEventListener("touchend", onEnd);
     };
   }, [queryClient]);
@@ -171,6 +185,11 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
             </NavLink>
           </div>
         </header>
+        {(pull > 0 || refreshed) ? (
+          <div className="pointer-events-none fixed left-1/2 z-40 grid h-11 w-11 -translate-x-1/2 place-items-center rounded-full bg-white text-sm shadow" style={{ top: `calc(${Math.max(pull, refreshed ? 28 : 0)}px + env(safe-area-inset-top))`, transform: `translateX(-50%) rotate(${pull * 2}deg)` }} aria-hidden>
+            {refreshed ? "✓" : "↓"}
+          </div>
+        ) : null}
         <main id="content" className="mx-auto w-full min-w-0 px-4 pb-4 pt-4 md:px-6 md:pb-10 md:pt-6">
           <AnimatePresence initial={false}>
             <motion.div

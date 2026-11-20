@@ -101,19 +101,18 @@ export function AgentSheet({ mode }: { mode: "sheet" | "drawer" }) {
           />
           ) : null}
           {agent.peek ? (
-            <motion.button
+            <motion.div
               key="agent-peek"
-              type="button"
-              className="sheet-solid fixed z-[80] flex min-h-14 w-[min(18rem,calc(100%-6.5rem))] items-center justify-between gap-3 rounded-full px-4 text-left"
-              style={{ left: 12, right: 12, bottom: "calc(6.25rem + env(safe-area-inset-bottom))", width: "auto" }}
+              className="sheet-solid fixed z-[80] flex min-h-14 items-center justify-between gap-2 rounded-full px-3"
+              style={{ left: 12, right: 12, bottom: "calc(9.25rem + env(safe-area-inset-bottom))" }}
               initial={{ y: 24, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 24, opacity: 0, pointerEvents: "none" }}
               transition={transition}
-              onClick={() => agent.setPeek(false)}
             >
-              <span className="min-w-0 truncate text-sm font-semibold">{agent.peekLine} · Вернуться в чат</span>
-            </motion.button>
+              <button type="button" className="min-w-0 flex-1 truncate text-left text-sm font-semibold" onClick={() => agent.setPeek(false)}>{agent.peekLine || "Готово"} · В чат</button>
+              {agent.canClear ? <button type="button" className="btn btn-quiet h-11 shrink-0 px-3" onClick={agent.clearForm}>Очистить форму</button> : null}
+            </motion.div>
           ) : mode === "sheet" ? (
             <motion.section
               key="agent-sheet"

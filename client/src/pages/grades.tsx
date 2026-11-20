@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import type { DisciplineView } from "@shared/domain";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { Choice, EmptyState, ErrorState, Glass, LoadingBlock, Pill } from "../components/ui";
@@ -25,16 +25,48 @@ interface Payload {
   disciplines: DisciplineView[];
 }
 
+function useCount(target: number) {
+  const reduce = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const [value, setValue] = useState(reduce ? target : 0);
+  useEffect(() => {
+    if (reduce) {
+      setValue(target);
+      return;
+    }
+    const start = performance.now();
+    let frame = 0;
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - start) / 700);
+      setValue(target * progress);
+      if (progress < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [target, reduce]);
+  return value;
+}
+
 function Ring({ value, max }: { value: number; max: number }) {
+  const reduce = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const [drawn, setDrawn] = useState(reduce);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setDrawn(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
   const radius = 16;
   const length = 2 * Math.PI * radius;
-  const offset = length * (1 - Math.min(value / max, 1));
+  const ratio = Math.min(value / Math.max(max, 0.001), 1);
+  const offset = drawn ? length * (1 - ratio) : length;
   return (
     <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden className="text-[var(--primary)]">
       <circle cx="22" cy="22" r={radius} fill="none" stroke="currentColor" opacity="0.2" strokeWidth="4" />
-      <circle cx="22" cy="22" r={radius} fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray={length} strokeDashoffset={offset} strokeLinecap="round" transform="rotate(-90 22 22)" />
+      <circle cx="22" cy="22" r={radius} fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray={length} strokeDashoffset={offset} strokeLinecap="round" transform="rotate(-90 22 22)" style={{ transition: reduce ? "none" : "stroke-dashoffset 700ms ease" }} />
     </svg>
   );
+}
+
+function ruNumber(value: number) {
+  return value.toLocaleString("ru-RU", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
 export function GradesPage() {
@@ -66,20 +98,11 @@ export function GradesPage() {
           <button key={item.id} type="button" className={`btn btn-quiet h-11 shrink-0 px-3 ${subject === item.name ? "bg-[var(--primary)] text-[var(--primary-ink)]" : ""}`} data-agent-action="grades-open" onClick={() => { setParams({ semester: grades.data!.semester, subject: item.name }); setOpened(item.id); }}>{item.name}</button>
         ))}
       </div>
-      <div className="grid grid-cols-3 gap-2">
-        <Glass className="p-0"><div className="glass-pad flex flex-col items-center px-2 py-3 text-center"><Ring value={average} max={5} /><p className="text-xs text-[var(--muted)]">Средний</p><p className="text-2xl font-bold">{average ? average.toFixed(1) : "—"}</p></div></Glass>
-        <Glass><div className="glass-pad flex flex-col items-center px-2 py-3 text-center"><Ring value={high} max={Math.max(grades.data.items.length, 1)} /><p className="text-xs text-[var(--muted)]">Риск</p><p className="text-2xl font-bold">{high}</p></div></Glass>
-        <Glass><div className="glass-pad flex flex-col items-center px-2 py-3 text-center"><Ring value={autos} max={Math.max(grades.data.items.length, 1)} /><p className="text-xs text-[var(--muted)]">Автомат</p><p className="text-2xl font-bold">{autos}</p></div></Glass>
-      </div>
-      <div className="chip-row flex gap-2 overflow-x-auto">
-        {grades.data.semesters.map((item) => (
-          <button key={item.id} type="button" className={`btn btn-quiet h-11 shrink-0 px-3 ${grades.data?.semester === item.id ? "bg-[var(--primary)] text-[var(--primary-ink)]" : ""}`} onClick={() => setParams({ semester: item.id })}>{item.label}</button>
-        ))}
-      </div>
+      <GradeMeters average={average} high={high} autos={autos} total={Math.max(grades.data.items.length, 1)} />
       {grades.data.items.length === 0 ? (
         <EmptyState title="Нет данных" text="За выбранный период оценок нет." />
       ) : (
-        grades.data.items.map((item) => {
+        <div className="stagger space-y-4">{grades.data.items.map((item) => {
           const discipline = grades.data!.disciplines.find((row) => row.id === item.id);
           const expanded = opened === item.id || item.name === subject;
           return (
@@ -118,8 +141,21 @@ export function GradesPage() {
               </div>
             </Glass>
           );
-        })
+        })}</div>
       )}
+    </div>
+  );
+}
+
+function GradeMeters({ average, high, autos, total }: { average: number; high: number; autos: number; total: number }) {
+  const shown = useCount(Number.isFinite(average) ? average : 0);
+  const risk = useCount(high);
+  const auto = useCount(autos);
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      <Glass className="p-0"><div className="glass-pad flex flex-col items-center px-2 py-3 text-center"><Ring value={shown} max={5} /><p className="text-xs text-[var(--muted)]">Средний</p><p className="text-2xl font-bold">{ruNumber(shown)}</p></div></Glass>
+      <Glass><div className="glass-pad flex flex-col items-center px-2 py-3 text-center"><Ring value={risk} max={total} /><p className="text-xs text-[var(--muted)]">Риск</p><p className="text-2xl font-bold">{Math.round(risk)}</p></div></Glass>
+      <Glass><div className="glass-pad flex flex-col items-center px-2 py-3 text-center"><Ring value={auto} max={total} /><p className="text-xs text-[var(--muted)]">Автомат</p><p className="text-2xl font-bold">{Math.round(auto)}</p></div></Glass>
     </div>
   );
 }
