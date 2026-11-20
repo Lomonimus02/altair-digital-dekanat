@@ -1,3 +1,8 @@
+function displayDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  return match ? `${match[3]}.${match[2]}.${match[1]}` : value;
+}
+
 /** Поля настоящей формы. Ключи совпадают с data-agent-field. */
 export function formFill(tool: string, args: Record<string, unknown>): Record<string, string> {
   const text = (value: unknown) => (value == null ? "" : String(value));
@@ -8,7 +13,7 @@ export function formFill(tool: string, args: Record<string, unknown>): Record<st
       title: text(args.title),
       description: text(args.description),
       kind: text(args.kind),
-      deadline: text(args.deadline),
+      deadline: displayDate(text(args.deadline)),
     };
   }
   if (tool === "create_request") {

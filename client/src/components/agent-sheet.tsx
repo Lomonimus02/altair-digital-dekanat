@@ -103,7 +103,7 @@ export function AgentSheet({ mode }: { mode: "sheet" | "drawer" }) {
           {agent.peek ? (
             <motion.div
               key="agent-peek"
-              className="sheet-solid fixed z-[80] flex min-h-14 items-center justify-between gap-2 rounded-full px-3"
+              className="sheet-solid fixed z-[80] flex min-h-14 items-center justify-between gap-2 rounded-full px-3" data-agent-peek=""
               style={{ left: 12, right: 12, bottom: "calc(9.25rem + env(safe-area-inset-bottom))" }}
               initial={{ y: 24, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}

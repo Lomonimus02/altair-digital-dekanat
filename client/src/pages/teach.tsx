@@ -87,7 +87,7 @@ export function TeachJournal() {
       <Choice label="Предмет" value={activeDiscipline} options={subjects.map((row) => ({ value: row.discipline, label: row.discipline }))} onChange={setDiscipline} />
       {journal.isLoading ? <LoadingBlock /> : null}
       {journal.error ? <ErrorState text="Журнал недоступен" /> : null}
-      <div className="space-y-3 md:hidden">
+      <div className="stagger space-y-3 md:hidden">
         {journal.data?.students.map((student) => (
           <Glass key={student.name} target={`journal-${student.name}`}>
             <p className="font-semibold">{student.name}</p>
@@ -110,7 +110,7 @@ export function TeachJournal() {
               <th className="w-[24%] px-3 py-2 text-left">Уже стоит</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="stagger">
             {journal.data?.students.map((student) => (
               <tr key={student.name} className="border-t border-white/40" data-agent-target={`journal-${student.name}`}>
                 <th className="sticky left-0 z-10 whitespace-normal bg-[#f4fff8] px-3 py-2 text-left font-semibold dark:bg-[#10182c]">{student.name}</th>
@@ -148,7 +148,7 @@ export function TeachQueue() {
     <div className="stagger space-y-3" data-agent-target="queue">
       <BackLink to="/teach" />
       <h1>На проверке</h1>
-      {rows.length === 0 ? <EmptyState title="Очередь пуста" text="Сданных работ пока нет." /> : rows.slice(0, 12).map((row) => (
+      {rows.length === 0 ? <EmptyState title="Очередь пуста" text="Сданных работ пока нет." /> : <div className="stagger space-y-3">{rows.slice(0, 12).map((row) => (
         <Link key={`${row.assignmentId}-${row.studentName}`} to={`/teach/homework/${row.assignmentId}`} className="liquid-glass block">
           <div className="glass-pad flex items-center justify-between gap-3 p-4">
             <div className="min-w-0">
@@ -158,7 +158,7 @@ export function TeachQueue() {
             <Pill tone={row.submission.status === "in_review" ? "mid" : "low"}>{row.submission.statusLabel}</Pill>
           </div>
         </Link>
-      ))}
+      ))}</div>}
     </div>
   );
 }

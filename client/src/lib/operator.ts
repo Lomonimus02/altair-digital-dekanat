@@ -22,11 +22,22 @@ export function moveCursor(element: Element | null, on: boolean) {
   }));
 }
 
+function reveal(element: HTMLElement) {
+  const covers = [...document.querySelectorAll("[data-agent-peek], .form-sticky, .mobile-nav-pill")]
+    .map((node) => node.getBoundingClientRect().top)
+    .filter((top) => top > 0 && top < window.innerHeight - 8);
+  const limit = (covers.length ? Math.min(...covers) : window.innerHeight) - 16;
+  const box = element.getBoundingClientRect();
+  const behavior = reduced() ? "auto" : "smooth";
+  if (box.bottom > limit) window.scrollBy({ top: box.bottom - limit, behavior });
+  else if (box.top < 72) window.scrollBy({ top: box.top - 72, behavior });
+}
+
 export async function glideTo(selector: string, signal: AbortSignal) {
   if (signal.aborted) return;
   const element = document.querySelector(selector);
   if (!(element instanceof HTMLElement)) return;
-  element.scrollIntoView({ block: "center", behavior: reduced() ? "auto" : "smooth" });
+  reveal(element);
   await wait(160, signal);
   moveCursor(element, true);
   element.classList.add("agent-shown");

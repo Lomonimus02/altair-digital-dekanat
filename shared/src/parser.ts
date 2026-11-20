@@ -121,13 +121,13 @@ export function parseIntent(message: string, role: Role, disciplines: string[] =
     return step("Ищу в положении.", "search_regulations", { query: message.trim().slice(0, 180) });
   }
 
-  if (/сда(й|ть)/.test(t) && (/задани|домашк|лаб|эссе|работ/.test(t) || /«/.test(message))) {
-    const quoted = message.match(/«([^»]+)»/);
-    const comment = /комментар/.test(message) ? extractComment(message) : "";
-    const afterColon = message.split(":").slice(1).join(":").trim();
-    const body = comment || afterColon || "Сдаю работу.";
-    const subject = quoted?.[1] ?? matchDiscipline(t, disciplines) ?? message.replace(/^[\s\S]*?по\s+/i, "").split(/:|с комментар/i)[0].trim();
-    return step("Готовлю сдачу. Её нужно подтвердить.", "submit_homework", { subject, body, ...(comment || /домашк/.test(t) ? { pick: "nearest" } : {}) });
+  if (/сда(й|ть)/.test(t) && (/задани|домашк|лаб|эссе|работ|текстом|комментар|напиш/.test(t) || /«/.test(message))) {
+    const body = submissionText(message);
+    const namedText = /с\s+текстом|с\s+комментарием|напиш(?:и|ите)|комментарий\s*[:\-—]/.test(message);
+    const head = message.replace(/\s*(?:,)?\s*(?:с\s+текстом|с\s+комментарием|напиш(?:и|ите)|комментарий\s*[:\-—])[\s\S]*$/i, "").trim();
+    const quoted = head.match(/«([^»]+)»/);
+    const subject = quoted?.[1] ?? matchDiscipline(head, disciplines) ?? head.replace(/^[\s\S]*?по\s+/i, "").split(":")[0].trim();
+    return step("Готовлю сдачу. Её нужно подтвердить.", "submit_homework", { subject, body, ...(namedText || /домашк/.test(t) ? { pick: "nearest" } : {}) });
   }
   if (/отметь|звезд|звёзд/.test(t) && /пар|занят|расписан|конституц|предмет/.test(t)) {
     const subject = matchDiscipline(t, disciplines) ?? "";
@@ -233,14 +233,17 @@ function parseTeacher(t: string, raw: string): Proposal | null {
     const asked = scheduleAsk(t, []);
     const today = moscowToday();
     const delta = (5 - weekdayIndex(today) + 7) % 7 || 7;
-    const after = raw.split(/:/).slice(1).join(":").trim();
+    const after = raw.includes(":") ? raw.split(/:/).slice(1).join(":").trim() : "";
     const title = (after || raw).split(/\s+срок\s+\d/i)[0].replace(/,\s*$/, "").replace(/^выдай(те)?\s*(задание\s*)?(группе\s*)?/i, "").trim();
     const named = /баз/.test(t) ? "Базы данных" : /програм/.test(t) ? "Программирование" : /информацион/.test(t) ? "Информационные технологии в юридической деятельности" : "";
+    const bare = title.length >= 3 ? title.slice(0, 160) : "Новое задание";
+    const withoutDeadline = (after || "").replace(/\s*,?\s*срок\s+\d[\s\S]*$/i, "").trim();
+    const description = withoutDeadline.length >= 3 && withoutDeadline !== bare && !/^выдай/i.test(withoutDeadline) ? withoutDeadline.slice(0, 500) : bare;
     return step("Показываю задание перед выдачей.", "teacher_issue_assignment", {
       groupName: group,
       ...(named ? { discipline: named } : {}),
-      title: title.length >= 3 ? title.slice(0, 160) : "Новое задание",
-      description: (after || raw).trim().slice(0, 500),
+      title: bare,
+      description,
       kind: /эссе/.test(t) ? "essay" : /лаб/.test(t) ? "lab" : /чтени/.test(t) ? "reading" : "problem_set",
       deadline: asked?.date ?? addDays(today, delta),
     });
@@ -333,6 +336,25 @@ function parseReminder(t: string): Proposal | null {
   if (title.length < 2) title = "Напоминание";
   else title = title.charAt(0).toUpperCase() + title.slice(1);
   return step("Ставлю напоминание.", "set_reminder", { title, day, time });
+}
+
+/** Текст, который человек просит вписать в работу. Без маркера — короткая заготовка. */
+export function submissionText(raw: string): string {
+  const markers = [/с\s+текстом(?=\s|[:\-—]|$)/i, /с\s+комментарием(?=\s|[:\-—]|$)/i, /напиш(?:и|ите)(?=\s|[:\-—]|$)/i, /комментарий\s*[:\-—]/i];
+  for (const marker of markers) {
+    const match = marker.exec(raw);
+    if (!match || match.index == null) continue;
+    let rest = raw.slice(match.index + match[0].length).trim().replace(/^[:\-—]\s*/, "");
+    const quoted = rest.match(/^(?:«([^»]+)»|"([^"]+)")/);
+    if (quoted) return (quoted[1] ?? quoted[2]).trim();
+    rest = rest.split(/\s+(?:и\s+)?сда(?:й|йте)(?=\s|$)/i)[0] ?? rest;
+    const text = rest.trim().replace(/[.。]+$/, "");
+    if (text.length >= 2) return text;
+  }
+  const outside = raw.replace(/«[^»]*»/g, " ");
+  const afterColon = outside.split(":").slice(1).join(":").trim();
+  if (afterColon.length >= 2) return afterColon;
+  return "Сдаю работу.";
 }
 
 export function extractComment(raw: string): string {

@@ -31,7 +31,7 @@ export function NotificationsPage() {
           </div>
         );
         return (
-          <SwipeNote key={note.id} onRead={() => void run("mark_notifications_read", { ids: [note.id] })}>
+          <SwipeNote key={note.id} unread={!note.readAt} onRead={() => void run("mark_notifications_read", { ids: [note.id] })}>
             {note.href ? <Link to={note.href} className="liquid-glass block"><div className="glass-pad p-4">{body}</div></Link> : <Glass>{body}</Glass>}
           </SwipeNote>
         );
@@ -40,7 +40,7 @@ export function NotificationsPage() {
   );
 }
 
-function SwipeNote({ children, onRead }: { children: ReactNode; onRead: () => void }) {
+function SwipeNote({ children, onRead, unread = false }: { children: ReactNode; onRead: () => void; unread?: boolean }) {
   const [x, setX] = useState(0);
   const start = useRef(0);
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -68,6 +68,20 @@ function SwipeNote({ children, onRead }: { children: ReactNode; onRead: () => vo
         }}
       >
         {children}
+        {unread ? (
+          <button
+            type="button"
+            className="note-read"
+            data-agent-action="notification-read"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onRead();
+            }}
+          >
+            Прочитано
+          </button>
+        ) : null}
       </div>
     </div>
   );

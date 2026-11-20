@@ -704,9 +704,8 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
     const found = await resolveLesson(user, args);
     if ("missingDay" in found) {
       const clarificationId = await saveClarification(user.id, "mark_schedule_item", args);
-      const day = formatRuDate(found.missingDay);
       return {
-        summary: `В ${day} пары «${String(args.subject || found.options[0].discipline)}» нет. Ближайшая — ${formatRuDate(found.options[0].date)}, ${found.options[0].startsAt}. Отметить её?`,
+        summary: `В ${longDay(found.missingDay, true)} пары «${String(args.subject || found.options[0].discipline)}» нет. Ближайшая — ${longDay(found.options[0].date, true)}, ${found.options[0].startsAt}. Отметить её?`,
         choices: found.options.map((row) => ({ label: `${formatRuDate(row.date)}, ${row.startsAt} ${row.discipline}`, clarificationId, entityId: String(row.id) })),
         card: { title: "Ближайшие пары", rows: found.options.map((row) => ({ label: formatRuDate(row.date), value: `${row.startsAt} ${row.discipline}` })) },
       };

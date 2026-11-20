@@ -406,23 +406,44 @@ function stems(value: string) {
   return value.toLowerCase().replace(/ё/g, "е").split(/[^a-zа-я0-9]+/).filter((word) => word.length >= 4).map((word) => word.slice(0, 6));
 }
 
+function compactTitle(value: string) {
+  return value.toLowerCase().replace(/ё/g, "е").replace(/[«»"'`]/g, "").replace(/\s+/g, " ").trim();
+}
+
+function distinctiveTokens(value: string) {
+  return stems(value).filter((token) => !/^(сдайте|сдай|сдати|лабора|задани|домашк|конспе|проект|чтени|работ|эссе|текст|комме|напиш|групп|предмет)$/.test(token));
+}
+
 export function titleHit(query: string, title: string, id: number) {
-  const q = query.toLowerCase().replace(/ё/g, "е");
-  if (q.includes(String(id)) && /№|#|\b\d+\b/.test(q)) return true;
-  const left = stems(query);
+  const q = compactTitle(query);
+  const t = compactTitle(title);
+  if (q === t || (t.length >= 8 && q.includes(t))) return true;
+  if (q.includes(String(id)) && /№|#|\b\d+\b/.test(query)) return true;
+  const left = distinctiveTokens(query);
+  if (!left.length) return false;
   const right = stems(title);
-  return left.some((token) => right.some((word) => word.startsWith(token) || token.startsWith(word)));
+  return left.every((token) => right.some((word) => word.startsWith(token) || token.startsWith(word)));
+}
+
+export function selectAssignments<T extends { id: number; title: string; discipline: string; kind: string }>(subject: string, rows: T[]): T[] {
+  const q = subject.toLowerCase().replace(/ё/g, "е");
+  const names = [...new Set(rows.map((row) => row.discipline))];
+  const titled = rows.filter((row) => titleHit(subject, row.title, row.id));
+  if (titled.length) {
+    const exact = titled.filter((row) => {
+      const title = compactTitle(row.title);
+      const query = compactTitle(subject);
+      return query === title || (title.length >= 8 && query.includes(title));
+    });
+    return exact.length ? exact : titled;
+  }
+  if (q.includes("лаб") && distinctiveTokens(subject).length === 0) return rows.filter((row) => row.kind === "lab");
+  return rows.filter((row) => subjectHit(subject, row.discipline, names) || row.title.toLowerCase().includes(q));
 }
 
 export async function resolveStudentAssignment(user: PublicUser, subject: string) {
   const rows = await listStudentHomework(user);
-  const names = [...new Set(rows.map((row) => row.discipline))];
-  const q = subject.toLowerCase().replace(/ё/g, "е");
-  const matches = rows.filter((row) => {
-    const byTitle = titleHit(subject, row.title, row.id);
-    if (q.includes("лаб") && !byTitle) return row.kind === "lab" && (subjectHit(subject, row.discipline, names) || byTitle);
-    return subjectHit(subject, row.discipline, names) || byTitle || row.title.toLowerCase().includes(q);
-  });
+  const matches = selectAssignments(subject, rows);
   const submittable = matches.filter((row) => ["not_started", "in_progress", "returned"].includes(row.submission.status));
   if (!submittable.length) {
     const reviewing = matches.some((row) => row.submission.status === "in_review" || row.submission.status === "submitted");
