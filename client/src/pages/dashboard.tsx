@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { formatDdMm } from "@shared/dates";
 import { KIND_LABEL, STATUS_LABEL, type LessonView, type RequestStatus } from "@shared/domain";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
+import { useAction } from "../lib/action";
 import { useAgent } from "../lib/agent";
 import { useAuth } from "../lib/auth";
 import { ErrorState, Glass, LoadingBlock, Pill } from "../components/ui";
@@ -21,9 +22,10 @@ export function DashboardPage() {
     enabled: user?.role === "student",
   });
   const notes = useQuery({ queryKey: ["notifications"], queryFn: () => api<{ notifications: Note[] }>("/api/notifications") });
-  const grades = useQuery({ queryKey: ["grades", ""], queryFn: () => api<{ items: { id: number; name: string; risk: string; statusText?: string; headline: string }[] }>("/api/grades") });
-  const requests = useQuery({ queryKey: ["requests"], queryFn: () => api<{ requests: { id: number; title: string; status: RequestStatus }[] }>("/api/requests") });
-  const homework = useQuery({ queryKey: ["homework"], queryFn: () => api<{ homework: { id: number; title: string; deadline: string; submission: { status: string } }[] }>("/api/homework") });
+  const student = user?.role === "student";
+  const grades = useQuery({ queryKey: ["grades", ""], queryFn: () => api<{ items: { id: number; name: string; risk: string; statusText?: string; average?: number | null; headline: string }[] }>("/api/grades"), enabled: student });
+  const requests = useQuery({ queryKey: ["requests"], queryFn: () => api<{ requests: { id: number; title: string; status: RequestStatus }[] }>("/api/requests"), enabled: student });
+  const homework = useQuery({ queryKey: ["homework"], queryFn: () => api<{ homework: { id: number; title: string; deadline: string; submission: { status: string } }[] }>("/api/homework"), enabled: student });
 
   if (user?.role === "staff") return <StaffHome />;
   if (brief.isLoading || schedule.isLoading) return <LoadingBlock />;
@@ -55,7 +57,7 @@ export function DashboardPage() {
             <Link className="inline-flex min-h-11 min-w-11 items-center px-2" to="/schedule">Все</Link>
           </div>
           {dayName ? <p className="mb-2 text-sm text-[var(--muted)]">{dayName}</p> : null}
-          {lessons.length ? lessons.map((lesson) => <LessonLine key={lesson.id} lesson={lesson} />) : <p className="py-4 text-sm text-[var(--muted)]">Ближайших пар нет.</p>}
+          {lessons.length ? lessons.map((lesson, index) => <LessonLine key={lesson.id} lesson={lesson} ask={index === 0} />) : <p className="py-4 text-sm text-[var(--muted)]">Ближайших пар нет.</p>}
         </Glass>
         <div className="flex flex-col gap-4">
           <Glass>
@@ -103,6 +105,8 @@ export function DashboardPage() {
 }
 
 function StaffHome() {
+  const [params] = useSearchParams();
+  const status = params.get("status");
   const inbox = useQuery({ queryKey: ["staff"], queryFn: () => api<{ requests: StaffRow[] }>("/api/staff/requests") });
   const agent = useAgent();
   if (inbox.isLoading) return <LoadingBlock />;
@@ -116,7 +120,7 @@ function StaffHome() {
         <button className="btn btn-primary mt-3" onClick={() => void agent.send("Разбери входящие")}>Разобрать с агентом</button>
       </Glass>
       <div className="space-y-3">
-        {[...(inbox.data?.requests ?? [])].sort((a, b) => Number(b.status === "submitted") - Number(a.status === "submitted")).slice(0, 6).map((row) => (
+        {[...(inbox.data?.requests ?? [])].filter((row) => !status || row.status === status).sort((a, b) => Number(b.status === "submitted") - Number(a.status === "submitted")).slice(0, 6).map((row) => (
           <Link key={row.id} to={`/staff/requests/${row.id}`} className="liquid-glass block">
             <div className="glass-pad p-4">
               <div className="flex items-center justify-between gap-2">
@@ -132,14 +136,22 @@ function StaffHome() {
   );
 }
 
-function LessonLine({ lesson }: { lesson: LessonView }) {
+function LessonLine({ lesson, ask = false }: { lesson: LessonView; ask?: boolean }) {
+  const agent = useAgent();
+  const run = useAction();
   return (
     <div className="flex gap-3 border-t border-white/40 py-3 first:border-0" data-agent-target={`lesson-${lesson.id}`}>
       <div className="w-24 shrink-0 text-sm font-semibold">{lesson.startsAt}–{lesson.endsAt}</div>
       <div className="min-w-0">
-        <p className="font-semibold">{lesson.discipline}</p>
+        <p className="line-clamp-2 font-semibold leading-snug">{lesson.discipline}</p>
         <p className="text-sm text-[var(--muted)]">{KIND_LABEL[lesson.kind]} · ауд. {lesson.room} · {lesson.teacher}</p>
         {lesson.changeType !== "none" ? <p className="mt-1 text-sm">{lesson.changeNote}</p> : null}
+        {ask ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button type="button" className="btn btn-quiet h-11 px-3" onClick={() => void run("mark_schedule_item", { scheduleItemId: lesson.id, flagged: !lesson.flagged })}>Звезда</button>
+            <button type="button" className="btn btn-quiet h-11 px-3" onClick={() => agent.ask(`Что у меня на паре «${lesson.discipline}»?`)}>Спросить агента</button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

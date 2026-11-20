@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { academicPeriod, addDays, dueAtMoscow, formatRuDate, formatWeekSpan, longDay, mondayOf, moscowHour, moscowToday, nearestStudyDay, resolveWhen, shortDayDate, studyWeek } from "../../shared/src/dates";
 import {
@@ -149,6 +149,10 @@ export async function perform(
       const found = await resolveStudentAssignment(user, String(args.subject ?? ""));
       if (!("id" in found)) {
         if (!found.options.length) return { ok: true, summary: "note" in found && found.note ? found.note : "Такого задания нет." };
+        if (args.pick === "nearest") {
+          const nearest = [...found.options].sort((a, b) => a.deadline.localeCompare(b.deadline))[0];
+          args.assignmentId = nearest.id;
+        } else {
         const clarificationId = await saveClarification(user.id, name, args);
         return {
           ok: true,
@@ -156,8 +160,9 @@ export async function perform(
           choices: found.options.map((row) => ({ label: row.title, clarificationId, entityId: String(row.id) })),
           card: { title: "Какое задание?", rows: found.options.map((row) => ({ label: row.discipline, value: `${row.title} · ${row.statusLabel}` })) },
         };
+        }
       }
-      args.assignmentId = found.id;
+      if (!args.assignmentId) args.assignmentId = found.id;
     } else {
       const found = await resolveTeacherSubmission(user, String(args.studentName), String(args.query ?? ""));
       if (!("assignmentId" in found)) {
@@ -176,6 +181,21 @@ export async function perform(
       args.discipline = found.discipline;
       args.workTitle = found.title;
     }
+  }
+  if (name === "teacher_issue_assignment" && !args.discipline) {
+    const load = await loadForTeacher(user.id);
+    const taught = load.filter((row) => row.groupName === String(args.groupName));
+    if (!taught.length) return { ok: true, summary: "У вас нет предмета в этой группе." };
+    if (taught.length > 1) {
+      const clarificationId = await saveClarification(user.id, name, args);
+      return {
+        ok: true,
+        summary: "Несколько предметов в группе. Какой выдать?",
+        choices: taught.map((row) => ({ label: row.discipline, clarificationId, entityId: row.discipline })),
+        card: { title: String(args.groupName), rows: taught.map((row) => ({ label: "Предмет", value: row.discipline })) },
+      };
+    }
+    args.discipline = taught[0].discipline;
   }
   if (name === "teacher_set_mark" && (!args.groupName || !args.discipline)) {
     const found = await resolveTaughtStudent(user, String(args.studentName), String(args.discipline ?? ""));
@@ -208,7 +228,8 @@ export async function perform(
         expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
       });
     await writeAudit(user, ctx.source, def.name, args, `Ждёт подтверждения: ${preview.title}`, false, null);
-    return { ok: true, summary: "Нужно ваше подтверждение.", ui: [], confirm: { pendingId, ...preview } };
+    const guide = guideFor(def.name, args);
+    return { ok: true, summary: "Нужно ваше подтверждение.", ui: guide ? [{ type: "navigate", to: guide, highlight: "form" }] : [], confirm: { pendingId, ...preview } };
   }
 
   const handler = handlers[def.name];
@@ -329,6 +350,7 @@ async function buildPreview(user: PublicUser, name: string, args: Record<string,
       fields: [
         { label: "Задание", value: row.title },
         { label: "Предмет", value: row.discipline },
+        { label: "Комментарий", value: String(args.body ?? "") },
         ...(href ? [{ label: "Ссылка", value: href }] : []),
       ],
     };
@@ -699,16 +721,15 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
       reversible: { undo: { type: "flag", scheduleItemId: item.id, flagged: previous } },
     };
   },
-  async staff_list_inbox(user) {
+  async staff_list_inbox(user, args) {
     if (user.role !== "staff") throw forbidden();
-    const inbox = await staffInbox();
-    const summary = inbox.length
-      ? inbox
-          .slice(0, 8)
-          .map((item) => `№${item.row.id} ${item.row.title} — ${STATUS_LABEL[item.row.status as RequestStatus].toLowerCase()} (${item.owner?.fullName ?? "студент"})`)
-          .join("; ")
-      : "Входящих нет.";
-    return { summary, ui: [{ type: "navigate", to: "/staff", highlight: "inbox" }] };
+    const inbox = (await staffInbox()).filter((item) => !args.status || item.row.status === args.status);
+    const shown = inbox.slice(0, 12);
+    const head = args.status === "submitted" ? "Новые заявки" : "Входящие";
+    const listed = shown.map((item) => `№${item.row.id} ${item.row.title} — ${STATUS_LABEL[item.row.status as RequestStatus].toLowerCase()} (${item.owner?.fullName ?? "студент"})`).join("; ");
+    const summary = !inbox.length ? `${head}: пусто.` : shown.length < inbox.length ? `${head}: ${inbox.length}. Показаны ${shown.length} из ${inbox.length}: ${listed}.` : `${head}: ${inbox.length}. ${listed}`;
+    const suffix = args.status ? `?status=${args.status}` : "";
+    return { summary, ui: [{ type: "navigate", to: `/staff${suffix}`, highlight: "inbox" }] };
   },
   async staff_triage(user, args) {
     const { request, student } = await getRequestFor(user, Number(args.requestId));
@@ -831,12 +852,15 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
     const group = args.group ? String(args.group) : "";
     const rows = queue.filter((row) => !group || row.groupName === group);
     const pending = rows.filter((row) => row.submission.status === "in_review");
-    const summary = pending.length
-      ? `На проверке ${pending.length}: ${pending.slice(0, 3).map((row) => `${row.studentName} — «${row.title}»`).join("; ")}.`
-      : "Непроверенных работ нет.";
+    const shown = pending.slice(0, 12);
+    const summary = !pending.length
+      ? "Непроверенных работ нет."
+      : shown.length === pending.length
+        ? `На проверке ${pending.length}: ${pending.map((row) => `${row.studentName} — «${row.title}»`).join("; ")}.`
+        : `На проверке ${pending.length}. Показаны ${shown.length} из ${pending.length}: ${shown.map((row) => `${row.studentName} — «${row.title}»`).join("; ")}.`;
     return {
       summary,
-      card: { title: "На проверке", rows: pending.slice(0, 6).map((row) => ({ label: row.groupName, value: `${row.studentName} — ${row.title}` })) },
+      card: { title: "На проверке", rows: shown.map((row) => ({ label: row.groupName, value: `${row.studentName} — ${row.title}` })) },
       ui: [{ type: "navigate", to: "/teach/homework", highlight: "queue" }],
     };
   },
@@ -1039,12 +1063,15 @@ async function resolveLesson(user: PublicUser, args: Record<string, unknown>) {
   }
   const names = await disciplineNames(user.id);
   const subject = matchDiscipline(String(args.subject ?? ""), names) ?? String(args.subject ?? "");
-  const focus = resolveWhen((args.when as "today") || "today").focus;
+  const focus = typeof args.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.date) ? args.date : resolveWhen((args.when as "today") || "today").focus;
+  const week = studyWeek(focus);
   const rows = await getDb()
     .select()
     .from(scheduleItems)
-    .where(and(eq(scheduleItems.groupName, user.groupName), eq(scheduleItems.date, focus)));
-  const row = rows.find((item) => item.discipline === subject) ?? rows.find((item) => item.discipline.toLowerCase().includes(subject.toLowerCase()));
+    .where(and(eq(scheduleItems.groupName, user.groupName), gte(scheduleItems.date, week[0]), lte(scheduleItems.date, week[5])));
+  const sameDay = rows.filter((item) => item.date === focus);
+  const pool = sameDay.length ? sameDay : rows.filter((item) => item.date >= focus);
+  const row = pool.find((item) => item.discipline === subject) ?? pool.find((item) => item.discipline.toLowerCase().includes(subject.toLowerCase().slice(0, 8))) ?? rows.find((item) => item.discipline === subject);
   if (!row) throw notFound("Занятие не найдено");
   return row;
 }
@@ -1242,6 +1269,7 @@ export async function runTurn(
   cards?: AnswerCard[];
   choices?: ChoiceChip[];
   link?: { to: string; label: string };
+  open?: string;
 }> {
   let mode: "device" | "fallback" | "server" | "cloud" = "fallback";
   let caption = "Быстрый режим";
@@ -1315,16 +1343,12 @@ export async function runTurn(
   }
   const details = steps.map((step) => step.detail).filter((detail): detail is string => Boolean(detail));
   const say = details.length ? details.join("\n\n") : proposal.say || "Уточните, пожалуйста, что сделать.";
-  const acted = !confirm && proposal.steps.some((call, index) => steps[index]?.status === "ok" && ACT_TOOLS.has(call.tool));
-  const explicit = /открой|перейди|покажи на странице|покажи страницу|покажи в журнале|покажи расписан/i.test(input.message);
   let nextUi = dedupeUi(ui);
   let link: { to: string; label: string } | undefined;
-  if (!acted && !explicit) {
-    const nav = nextUi.find((item) => item.type === "navigate");
-    if (nav && nav.type === "navigate") link = { to: nav.to, label: "На странице" };
-    nextUi = nextUi.filter((item) => item.type !== "navigate");
-  }
-  return { mode, caption, say, steps, ui: nextUi, confirm, citations, download, undo, cards, choices, link };
+  const nav = nextUi.find((item) => item.type === "navigate");
+  if (nav && nav.type === "navigate") link = { to: nav.to, label: "На странице" };
+  const open = nav && nav.type === "navigate" ? nav.to : undefined;
+  return { mode, caption, say, steps, ui: nextUi, confirm, citations, download, undo, cards, choices, link, open };
 }
 
 const ACT_TOOLS = new Set([
@@ -1348,6 +1372,16 @@ const ACT_TOOLS = new Set([
   "mark_schedule_item",
   "teacher_open_roll",
 ]);
+
+function guideFor(name: string, args: Record<string, unknown>) {
+  if (name === "submit_homework" && args.assignmentId) return `/homework/${args.assignmentId}`;
+  if (name === "create_request") return "/requests/new";
+  if (name === "teacher_issue_assignment") return "/teach/assign";
+  if (name === "staff_publish_announcement") return "/staff/announcements";
+  if (name === "staff_set_status" && args.requestId) return `/staff/requests/${args.requestId}`;
+  if ((name === "teacher_grade_homework" || name === "teacher_return_homework") && args.assignmentId) return `/teach/homework/${args.assignmentId}`;
+  return undefined;
+}
 
 function dedupeUi(list: UiDirective[]): UiDirective[] {
   let navigate: Extract<UiDirective, { type: "navigate" }> | null = null;
@@ -1388,7 +1422,9 @@ export async function clarifyChoice(user: PublicUser, clarificationId: string, e
   if (new Date(row.expiresAt).getTime() < Date.now()) throw new HttpError(410, "expired", "Срок уточнения вышел. Повторите просьбу.");
   await getDb().delete(clarifications).where(eq(clarifications.id, clarificationId));
   const args = { ...(row.args as Record<string, unknown>) };
-  if (row.tool === "teacher_set_mark") {
+  if (row.tool === "teacher_issue_assignment") {
+    args.discipline = entityId;
+  } else if (row.tool === "teacher_set_mark") {
     const [groupName, discipline] = entityId.split("||");
     args.groupName = groupName;
     args.discipline = discipline;

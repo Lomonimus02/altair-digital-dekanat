@@ -65,6 +65,28 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
   }, [queryClient]);
 
   useEffect(() => {
+    let startY = 0;
+    let pulling = false;
+    const onStart = (event: TouchEvent) => {
+      if (window.scrollY > 4) return;
+      startY = event.touches[0]?.clientY ?? 0;
+      pulling = true;
+    };
+    const onEnd = (event: TouchEvent) => {
+      if (!pulling) return;
+      pulling = false;
+      const end = event.changedTouches[0]?.clientY ?? startY;
+      if (end - startY > 72) void queryClient.invalidateQueries();
+    };
+    window.addEventListener("touchstart", onStart, { passive: true });
+    window.addEventListener("touchend", onEnd);
+    return () => {
+      window.removeEventListener("touchstart", onStart);
+      window.removeEventListener("touchend", onEnd);
+    };
+  }, [queryClient]);
+
+  useEffect(() => {
     if (user?.role === "teacher") {
       void queryClient.prefetchQuery({ queryKey: ["schedule", "", "", ""], queryFn: () => api("/api/schedule?when=today") });
       return;

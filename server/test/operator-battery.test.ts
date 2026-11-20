@@ -56,6 +56,15 @@ const phrases: { login: string; password: string; phrase: string; confirm?: bool
   { login: "orlov.pn", password: "Altair-teacher-58", phrase: "включи тёмную тему", hint: /тема/i },
   { login: "lebedeva.ip", password: "Altair-staff-204", phrase: "разбери входящие", hint: /справк|заявлен|входящ|заявк/i },
   { login: "lebedeva.ip", password: "Altair-staff-204", phrase: "опубликуй объявление: Приём справок до 17", confirm: true },
+  { login: "sorokin.mo", password: "Altair-student-31", phrase: "сдай домашку по базам данных с комментарием Готово", confirm: true, hint: /подтверж|задани|баз/i },
+  { login: "sorokin.mo", password: "Altair-student-31", phrase: "сдай работу по базам данных с комментарием Готово", confirm: true, hint: /подтверж|задани|баз/i },
+  { login: "sorokin.mo", password: "Altair-student-31", phrase: "сдай домашку по базам данных: Готово", confirm: true, hint: /подтверж|задани|баз/i },
+  { login: "orlov.pn", password: "Altair-teacher-58", phrase: "выдай задание группе ЮР-1-26-02: Эссе о сроках хранения, срок 30 ноября", confirm: true, hint: /подтверж/i },
+  { login: "orlov.pn", password: "Altair-teacher-58", phrase: "покажи непроверенные работы", hint: /проверк/i },
+  { login: "lebedeva.ip", password: "Altair-staff-204", phrase: "покажи новые заявки", hint: /нов/i },
+  { login: "lebedeva.ip", password: "Altair-staff-204", phrase: "выдай справку по заявке 2", confirm: true },
+  { login: "volkova.as", password: "Altair-student-17", phrase: "отметь пару по конституционному праву в понедельник", hint: /отметил|конституц/i },
+  { login: "orlov.pn", password: "Altair-teacher-58", phrase: "включи тёмную тему", hint: /тема/i },
 ];
 
 it("сорок фраз выполняются правилами и запасным путём сервера", async () => {
@@ -81,6 +90,53 @@ it("сорок фраз выполняются правилами и запас�
   expect(misses, misses.join("\n")).toEqual([]);
 });
 
+it("исправленные команды доходят до карточки, стоп отменяет подтверждение", async () => {
+  const sorokin = await login("sorokin.mo", "Altair-student-31");
+  const homework = await turn(sorokin, "сдай домашку по базам данных с комментарием Готово");
+  expect(homework.confirm?.fields.find((field) => field.label === "Комментарий")?.value).toBe("Готово");
+  expect(homework.open ?? homework.ui?.find((item) => item.type === "navigate")?.to).toMatch(/\/homework\/\d+/);
+  const stopped = await app.inject({
+    method: "POST",
+    url: "/api/agent/reject",
+    payload: { pendingId: homework.confirm!.pendingId },
+    headers: { cookie: sorokin.cookie, "x-csrf-token": sorokin.csrf },
+  });
+  expect(stopped.statusCode).toBe(200);
+  const late = await app.inject({
+    method: "POST",
+    url: "/api/agent/confirm",
+    payload: { pendingId: homework.confirm!.pendingId },
+    headers: { cookie: sorokin.cookie, "x-csrf-token": sorokin.csrf },
+  });
+  expect(late.statusCode).toBeGreaterThanOrEqual(400);
+
+  const teacher = await login("orlov.pn", "Altair-teacher-58");
+  const issued = await turn(teacher, "выдай задание группе ЮР-1-26-02: Эссе о сроках хранения, срок 30 ноября");
+  const fields = Object.fromEntries((issued.confirm?.fields ?? []).map((field) => [field.label, field.value]));
+  expect(fields["Группа"]).toBe("ЮР-1-26-02");
+  expect(fields["Задание"]).toMatch(/^Эссе/);
+  expect(fields["Срок"]).toBe("2026-11-30");
+  expect(fields["Предмет"]?.toLowerCase()).toMatch(/информацион/);
+
+  const queue = await turn(teacher, "покажи непроверенные работы");
+  const total = Number(queue.say.match(/На проверке (\d+)/)?.[1] ?? "0");
+  const names = queue.say.split(";").length;
+  expect(queue.ui?.some((item) => item.to?.includes("/teach/homework"))).toBe(true);
+  expect(queue.say.includes("Показаны") || names >= total).toBe(true);
+
+  const staff = await login("lebedeva.ip", "Altair-staff-204");
+  const fresh = await turn(staff, "покажи новые заявки");
+  expect(fresh.say.toLowerCase()).toMatch(/нов/);
+  expect(fresh.say.toLowerCase()).not.toMatch(/выдана|отклонена/);
+  const certificate = await turn(staff, "выдай справку по заявке 2");
+  expect(certificate.confirm?.fields.some((field) => /выдан/i.test(field.value))).toBe(true);
+
+  const volkova = await login("volkova.as", "Altair-student-17");
+  const star = await turn(volkova, "отметь пару по конституционному праву в понедельник");
+  expect(star.say).toMatch(/Отметил/);
+  expect(star.say.toLowerCase()).toMatch(/конституц/);
+});
+
 it("заявка заполняется и создаётся только после подтверждения", async () => {
   const session = await login("sorokin.mo", "Altair-student-31");
   const before = await app.inject({ method: "GET", url: "/api/requests", headers: { cookie: session.cookie, "x-csrf-token": session.csrf } });
@@ -104,6 +160,22 @@ it("заявка заполняется и создаётся только по�
   const after = await app.inject({ method: "GET", url: "/api/requests", headers: { cookie: session.cookie, "x-csrf-token": session.csrf } });
   expect((after.json() as { requests: unknown[] }).requests.length).toBe(count + 1);
 });
+
+async function turn(session: { cookie: string; csrf: string }, message: string) {
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/agent/turn",
+    payload: { message, mode: "fallback" },
+    headers: { cookie: session.cookie, "x-csrf-token": session.csrf },
+  });
+  expect(res.statusCode, res.body).toBe(200);
+  return res.json() as {
+    say: string;
+    open?: string;
+    confirm?: { pendingId: string; fields: { label: string; value: string }[] };
+    ui?: { type: string; to?: string }[];
+  };
+}
 
 async function login(loginName: string, password: string) {
   const res = await app.inject({ method: "POST", url: "/api/auth/login", payload: { login: loginName, password } });

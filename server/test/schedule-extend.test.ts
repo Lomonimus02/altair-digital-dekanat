@@ -129,7 +129,7 @@ it("преподаватель видит свою неделю, а подпис
   expect(answer.say).toMatch(/отменена|другая аудитория|перенос/);
   expect(answer.cards?.length).toBeGreaterThan(0);
   expect(answer.link?.to).toContain("/schedule");
-  expect(answer.ui?.some((entry) => entry.type === "navigate")).toBe(false);
+  expect(answer.ui?.some((entry) => entry.type === "navigate" && entry.to?.includes("/schedule"))).toBe(true);
 
   const studentLogin = await app.inject({ method: "POST", url: "/api/auth/login", payload: { login: "sorokin.mo", password: "Altair-student-31" } });
   const studentCookie = asCookie(studentLogin.headers["set-cookie"]);

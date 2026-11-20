@@ -121,11 +121,22 @@ export function parseIntent(message: string, role: Role, disciplines: string[] =
     return step("Ищу в положении.", "search_regulations", { query: message.trim().slice(0, 180) });
   }
 
-  if (/сда(й|ть)/.test(t) && (/задани/.test(t) || /«/.test(message))) {
+  if (/сда(й|ть)/.test(t) && (/задани|домашк|лаб|эссе|работ/.test(t) || /«/.test(message))) {
     const quoted = message.match(/«([^»]+)»/);
-    const body = (quoted ? message.split(/»\s*:/).slice(1).join(":") : message.split(":").slice(1).join(":")).trim() || "Сдаю работу.";
-    const subject = quoted?.[1] ?? message.replace(/^[\s\S]*?по\s+/i, "").split(":")[0].trim();
-    return step("Готовлю сдачу. Её нужно подтвердить.", "submit_homework", { subject, body });
+    const comment = /комментар/.test(message) ? extractComment(message) : "";
+    const afterColon = message.split(":").slice(1).join(":").trim();
+    const body = comment || afterColon || "Сдаю работу.";
+    const subject = quoted?.[1] ?? matchDiscipline(t, disciplines) ?? message.replace(/^[\s\S]*?по\s+/i, "").split(/:|с комментар/i)[0].trim();
+    return step("Готовлю сдачу. Её нужно подтвердить.", "submit_homework", { subject, body, ...(comment || /домашк/.test(t) ? { pick: "nearest" } : {}) });
+  }
+  if (/отметь|звезд|звёзд/.test(t) && /пар|занят|расписан|конституц|предмет/.test(t)) {
+    const subject = matchDiscipline(t, disciplines) ?? "";
+    const asked = scheduleAsk(t, disciplines);
+    return step("Отмечаю занятие.", "mark_schedule_item", {
+      subject,
+      flagged: !/сним|убери/.test(t),
+      ...(asked?.date ? { date: asked.date } : asked?.when && asked.when !== "week" ? { when: asked.when } : {}),
+    });
   }
 
   if (/справк|заявлен|академ|военкомат|материальн|перевод|закаж|подать заяв|нужн/.test(t) && detectKind(t)) {
@@ -217,20 +228,21 @@ function parseTeacher(t: string, raw: string): Proposal | null {
       label: "Текущая",
     });
   }
-  if (/выдай|новое задание|задание по/.test(t)) {
-    const discipline = /баз/.test(t) ? "Базы данных" : /програм/.test(t) ? "Программирование" : "Информационные технологии в юридической деятельности";
-    const group = /юр|информацион/.test(t) ? "ЮР-1-26-02" : "БИ-3-26-04";
+  if (/выдай|новое задание/.test(t) && /задани/.test(t)) {
+    const group = t.match(/[а-яё]{1,4}-\d-\d{2}-\d{2}/i)?.[0]?.toUpperCase() ?? (/юр/.test(t) ? "ЮР-1-26-02" : "БИ-3-26-04");
+    const asked = scheduleAsk(t, []);
     const today = moscowToday();
     const delta = (5 - weekdayIndex(today) + 7) % 7 || 7;
-    const titleMatch = raw.replace(/выдай(те)?\s*/i, "").trim();
-    const title = (titleMatch.slice(0, 80) || `Задание по ${discipline}`).replace(/\s+на пятниц.*/i, "");
+    const after = raw.split(/:/).slice(1).join(":").trim();
+    const title = (after || raw).split(/\s+срок\s+\d/i)[0].replace(/,\s*$/, "").replace(/^выдай(те)?\s*(задание\s*)?(группе\s*)?/i, "").trim();
+    const named = /баз/.test(t) ? "Базы данных" : /програм/.test(t) ? "Программирование" : /информацион/.test(t) ? "Информационные технологии в юридической деятельности" : "";
     return step("Показываю задание перед выдачей.", "teacher_issue_assignment", {
       groupName: group,
-      discipline: /баз/.test(t) || /програм/.test(t) ? discipline : "Базы данных",
-      title: title.length >= 3 ? title : `Задание по ${discipline}`,
-      description: raw.trim().slice(0, 500),
-      kind: /лаб/.test(t) ? "lab" : "problem_set",
-      deadline: addDays(today, delta),
+      ...(named ? { discipline: named } : {}),
+      title: title.length >= 3 ? title.slice(0, 160) : "Новое задание",
+      description: (after || raw).trim().slice(0, 500),
+      kind: /эссе/.test(t) ? "essay" : /лаб/.test(t) ? "lab" : /чтени/.test(t) ? "reading" : "problem_set",
+      deadline: asked?.date ?? addDays(today, delta),
     });
   }
   if (/объявлен/.test(t) && /групп/.test(t)) return step("Открываю объявление группе.", "open_page", { page: "teach_announce" });
@@ -261,6 +273,10 @@ function parseStaff(t: string, raw: string): Proposal | null {
     });
   }
   const requestId = extractRequestId(t);
+  if (/нов(ые|ых|ая|ую) заяв/.test(t) || /покажи нов/.test(t)) return step("Открываю новые заявки.", "staff_list_inbox", { status: "submitted" });
+  if (requestId && /выдай справк|справк\S*\s+по заявк|выда(й|ть) заявк/.test(t)) {
+    return step("Нужно подтвердить выдачу справки.", "staff_set_status", { requestId, status: "issued" });
+  }
   if (requestId && /в работу|готов|выдан|отклон/.test(t)) {
     const status = t.includes("в работу") ? "in_progress" : t.includes("выдан") ? "issued" : t.includes("готов") ? "ready" : "rejected";
     if (status === "rejected") {

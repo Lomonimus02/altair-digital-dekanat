@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { STATUS_LABEL, type RequestStatus } from "@shared/domain";
-import { useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAction } from "../lib/action";
@@ -16,7 +16,7 @@ export function NotificationsPage() {
   const items = notes.data?.notifications ?? [];
   return (
     <div className="space-y-3" data-agent-target="notifications">
-      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+      <div className="sticky top-0 z-20 flex min-w-0 flex-wrap items-center justify-between gap-2 bg-[var(--bg,transparent)] py-1">
         <h1 className="min-w-0">Уведомления</h1>
         <Button className="h-11 shrink-0 whitespace-nowrap px-4" variant="glass" data-agent-action="notification-read-all" onClick={() => void run("mark_notifications_read", { all: true })}>Прочитать все</Button>
       </div>
@@ -32,12 +32,40 @@ export function NotificationsPage() {
             ) : null}
           </div>
         );
-        return note.href ? (
-          <Link key={note.id} to={note.href} className="liquid-glass block"><div className="glass-pad p-4">{body}</div></Link>
-        ) : (
-          <Glass key={note.id}>{body}</Glass>
+        return (
+          <SwipeNote key={note.id} onRead={() => void run("mark_notifications_read", { ids: [note.id] })}>
+            {note.href ? <Link to={note.href} className="liquid-glass block"><div className="glass-pad p-4">{body}</div></Link> : <Glass>{body}</Glass>}
+          </SwipeNote>
         );
       })}
+    </div>
+  );
+}
+
+function SwipeNote({ children, onRead }: { children: ReactNode; onRead: () => void }) {
+  const [x, setX] = useState(0);
+  const start = useRef(0);
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return (
+    <div className="relative overflow-hidden rounded-[1.75rem]">
+      <div className="absolute inset-y-0 right-0 flex w-28 items-stretch">
+        <button type="button" className="w-full bg-[var(--primary)] text-sm font-semibold text-[var(--primary-ink)]" data-agent-action="notification-read" onClick={onRead}>Прочитано</button>
+      </div>
+      <div
+        className="relative"
+        style={{ transform: `translateX(${x}px)`, transition: reduced ? "none" : "transform 180ms ease" }}
+        onTouchStart={(event) => { start.current = event.touches[0]?.clientX ?? 0; }}
+        onTouchMove={(event) => {
+          const dx = (event.touches[0]?.clientX ?? 0) - start.current;
+          if (dx < 0) setX(Math.max(dx, -112));
+        }}
+        onTouchEnd={() => {
+          if (x < -72) onRead();
+          setX(0);
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }
@@ -262,6 +290,15 @@ export function StaffAnnouncePage() {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [done, setDone] = useState("");
+  useEffect(() => {
+    const onFill = (event: Event) => {
+      const detail = (event as CustomEvent<{ field: string; value: string }>).detail;
+      if (detail.field === "announce-title") setTitle(detail.value);
+      if (detail.field === "announce-body") setBody(detail.value);
+    };
+    window.addEventListener("altair-fill", onFill);
+    return () => window.removeEventListener("altair-fill", onFill);
+  }, []);
   const list = useQuery({ queryKey: ["announcements"], queryFn: () => api<{ announcements: { id: number; title: string; body: string }[] }>("/api/announcements") });
   return (
     <div className="space-y-4" data-agent-target="announcements">
@@ -277,9 +314,9 @@ export function StaffAnnouncePage() {
             void list.refetch();
           });
         }}>
-          <input className="field" placeholder="Заголовок" value={title} onChange={(event) => setTitle(event.target.value)} required />
-          <textarea className="field min-h-28 py-3" placeholder="Текст" value={body} onChange={(event) => setBody(event.target.value)} required />
-          <Button>Опубликовать</Button>
+          <input className="field" data-agent-field="announce-title" placeholder="Заголовок" value={title} onChange={(event) => setTitle(event.target.value)} required />
+          <textarea className="field min-h-28 py-3" data-agent-field="announce-body" placeholder="Текст" value={body} onChange={(event) => setBody(event.target.value)} required />
+          <Button data-agent-action="staff-publish">Опубликовать</Button>
           {done ? <p className="text-sm">{done}</p> : null}
         </form>
       </Glass>

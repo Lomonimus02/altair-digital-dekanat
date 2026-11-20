@@ -164,7 +164,7 @@ it("сотрудник меняет статус, студент сразу ви
 
   const cloud = await authed(sorokin, "POST", "/api/agent/turn", { message: "что у меня завтра?", mode: "cloud" });
   expect(cloud.json().mode).toBe("fallback");
-  expect(cloud.json().ui.some((item: { type: string }) => item.type === "navigate")).toBe(false);
+  expect(cloud.json().ui.some((item: { type: string; to?: string }) => item.type === "navigate" && item.to?.includes("/schedule"))).toBe(true);
   expect(cloud.json().link.to).toContain("/schedule");
   expect(cloud.json().cards.length).toBeGreaterThan(0);
 });

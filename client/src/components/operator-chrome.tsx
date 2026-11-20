@@ -25,7 +25,7 @@ export function OperatorChrome() {
         </div>
       ) : null}
       {agent.operator ? (
-        <div className="fixed inset-x-3 top-[max(12px,env(safe-area-inset-top))] z-[90] mx-auto flex max-w-md items-center gap-2 rounded-full bg-slate-900/92 px-3 py-2 text-white shadow-lg" role="status">
+        <div className="operator-pill fixed inset-x-3 top-[max(12px,env(safe-area-inset-top))] z-[90] mx-auto flex max-w-md items-center gap-2 rounded-full px-3 py-2 text-white shadow-lg" role="status">
           <span className="min-w-0 flex-1 truncate text-sm">{agent.operator}</span>
           <button type="button" className="h-11 shrink-0 rounded-full bg-white/15 px-3 text-sm" onClick={agent.stop}>Стоп</button>
         </div>

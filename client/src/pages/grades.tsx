@@ -25,6 +25,18 @@ interface Payload {
   disciplines: DisciplineView[];
 }
 
+function Ring({ value, max }: { value: number; max: number }) {
+  const radius = 16;
+  const length = 2 * Math.PI * radius;
+  const offset = length * (1 - Math.min(value / max, 1));
+  return (
+    <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden className="text-[var(--primary)]">
+      <circle cx="22" cy="22" r={radius} fill="none" stroke="currentColor" opacity="0.2" strokeWidth="4" />
+      <circle cx="22" cy="22" r={radius} fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray={length} strokeDashoffset={offset} strokeLinecap="round" transform="rotate(-90 22 22)" />
+    </svg>
+  );
+}
+
 export function GradesPage() {
   const [params, setParams] = useSearchParams();
   const semester = params.get("semester") ?? "";
@@ -38,6 +50,7 @@ export function GradesPage() {
   if (grades.isLoading) return <LoadingBlock />;
   if (grades.error || !grades.data) return <ErrorState text="Оценки не загрузились" onRetry={() => void grades.refetch()} />;
 
+  const average = grades.data.items.reduce((sum, item) => sum + (item.average ?? 0), 0) / Math.max(grades.data.items.filter((item) => item.average != null).length, 1);
   const high = grades.data.items.filter((item) => item.risk === "high").length;
   const autos = grades.data.items.filter((item) => item.automatic && !item.finalText).length;
   return (
@@ -54,9 +67,14 @@ export function GradesPage() {
         ))}
       </div>
       <div className="grid grid-cols-3 gap-2">
-        <Glass className="p-0"><div className="glass-pad px-2 py-3 text-center"><p className="text-xs text-[var(--muted)]">Дисциплин</p><p className="text-2xl font-bold">{grades.data.items.length}</p></div></Glass>
-        <Glass><div className="glass-pad px-2 py-3 text-center"><p className="text-xs text-[var(--muted)]">Риск</p><p className="text-2xl font-bold">{high}</p></div></Glass>
-        <Glass><div className="glass-pad px-2 py-3 text-center"><p className="text-xs text-[var(--muted)]">Автомат</p><p className="text-2xl font-bold">{autos}</p></div></Glass>
+        <Glass className="p-0"><div className="glass-pad flex flex-col items-center px-2 py-3 text-center"><Ring value={average} max={5} /><p className="text-xs text-[var(--muted)]">Средний</p><p className="text-2xl font-bold">{average ? average.toFixed(1) : "—"}</p></div></Glass>
+        <Glass><div className="glass-pad flex flex-col items-center px-2 py-3 text-center"><Ring value={high} max={Math.max(grades.data.items.length, 1)} /><p className="text-xs text-[var(--muted)]">Риск</p><p className="text-2xl font-bold">{high}</p></div></Glass>
+        <Glass><div className="glass-pad flex flex-col items-center px-2 py-3 text-center"><Ring value={autos} max={Math.max(grades.data.items.length, 1)} /><p className="text-xs text-[var(--muted)]">Автомат</p><p className="text-2xl font-bold">{autos}</p></div></Glass>
+      </div>
+      <div className="chip-row flex gap-2 overflow-x-auto">
+        {grades.data.semesters.map((item) => (
+          <button key={item.id} type="button" className={`btn btn-quiet h-11 shrink-0 px-3 ${grades.data?.semester === item.id ? "bg-[var(--primary)] text-[var(--primary-ink)]" : ""}`} onClick={() => setParams({ semester: item.id })}>{item.label}</button>
+        ))}
       </div>
       {grades.data.items.length === 0 ? (
         <EmptyState title="Нет данных" text="За выбранный период оценок нет." />

@@ -35,6 +35,8 @@ export const UI_ACTIONS: UiAction[] = [
   { id: "homework-save", label: "Сохранить работу", roles: ["student"], tool: "save_homework" },
   { id: "homework-submit", label: "Сдать работу", roles: ["student"], tool: "submit_homework" },
   { id: "grades-open", label: "Открыть дисциплину", roles: ["student"], tool: "get_grades" },
+  { id: "teach-issue", label: "Выдать задание", roles: ["teacher"], tool: "teacher_issue_assignment", to: "/teach/assign" },
+  { id: "staff-publish", label: "Опубликовать объявление", roles: ["staff"], tool: "staff_publish_announcement" },
   { id: "teach-grade", label: "Оценить работу", roles: ["teacher"], tool: "teacher_grade_homework" },
   { id: "teach-return", label: "Вернуть работу", roles: ["teacher"], tool: "teacher_return_homework" },
 ];

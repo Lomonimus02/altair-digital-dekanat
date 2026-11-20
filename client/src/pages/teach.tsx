@@ -241,6 +241,19 @@ export function TeachIssue() {
   const [deadline, setDeadline] = useState("");
   const [kind, setKind] = useState("lab");
   const [message, setMessage] = useState("");
+  useEffect(() => {
+    const onFill = (event: Event) => {
+      const detail = (event as CustomEvent<{ field: string; value: string }>).detail;
+      if (detail.field === "group") setGroupName(detail.value);
+      if (detail.field === "discipline") setDiscipline(detail.value);
+      if (detail.field === "title") setTitle(detail.value);
+      if (detail.field === "description") setDescription(detail.value);
+      if (detail.field === "deadline") setDeadline(detail.value);
+      if (detail.field === "kind") setKind(detail.value);
+    };
+    window.addEventListener("altair-fill", onFill);
+    return () => window.removeEventListener("altair-fill", onFill);
+  }, []);
   return (
     <div className="space-y-4" data-agent-target="issue">
       <BackLink to="/teach" />
@@ -251,13 +264,13 @@ export function TeachIssue() {
           void run("teacher_issue_assignment", { groupName, discipline, title, description, kind, deadline: deadline.includes(".") ? deadline.split(".").reverse().join("-") : deadline }).then(() => setMessage("Задание выдано, группа получила уведомление.")).catch((error: Error) => setMessage(error.message));
         }}>
           <Choice label="Группа" value={groupName} options={[...new Set((home.data?.groups ?? [{ groupName: "БИ-3-26-04" }, { groupName: "ЮР-1-26-02" }]).map((row) => row.groupName))].map((name) => ({ value: name, label: name }))} onChange={setGroupName} />
-          <label className="block text-sm font-semibold">Предмет<input className="field mt-1" value={discipline} onChange={(event) => setDiscipline(event.target.value)} /></label>
-          <label className="block text-sm font-semibold">Название<input className="field mt-1" value={title} onChange={(event) => setTitle(event.target.value)} required /></label>
-          <label className="block text-sm font-semibold">Условие<textarea className="field mt-1 min-h-24 py-3" value={description} onChange={(event) => setDescription(event.target.value)} required /></label>
+          <label className="block text-sm font-semibold">Предмет<input className="field mt-1" data-agent-field="discipline" value={discipline} onChange={(event) => setDiscipline(event.target.value)} /></label>
+          <label className="block text-sm font-semibold">Название<input className="field mt-1" data-agent-field="title" value={title} onChange={(event) => setTitle(event.target.value)} required /></label>
+          <label className="block text-sm font-semibold">Условие<textarea className="field mt-1 min-h-24 py-3" data-agent-field="description" value={description} onChange={(event) => setDescription(event.target.value)} required /></label>
           <Choice label="Тип" value={kind} options={[{ value: "lab", label: "Лабораторная" }, { value: "problem_set", label: "Задачник" }, { value: "essay", label: "Эссе" }, { value: "reading", label: "Чтение" }, { value: "project", label: "Проект" }]} onChange={setKind} />
-          <label className="block text-sm font-semibold">Срок<input className="field mt-1" inputMode="numeric" placeholder="дд.мм.гггг" lang="ru" value={deadline} onChange={(event) => setDeadline(event.target.value)} required /></label>
+          <label className="block text-sm font-semibold">Срок<input className="field mt-1" data-agent-field="deadline" inputMode="numeric" placeholder="дд.мм.гггг" lang="ru" value={deadline} onChange={(event) => setDeadline(event.target.value)} required /></label>
           <div className="form-sticky">
-            <Button className="h-11 px-4">Выдать</Button>
+            <Button className="h-11 px-4" data-agent-action="teach-issue">Выдать</Button>
           </div>
           {message ? <p className="text-sm">{message}</p> : null}
         </form>

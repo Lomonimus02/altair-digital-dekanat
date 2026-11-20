@@ -25,7 +25,7 @@ export function RequestsPage() {
   if (list.isLoading) return <LoadingBlock />;
   if (list.error) return <ErrorState text="Заявки не загрузились" onRetry={() => void list.refetch()} />;
   return (
-    <div className="space-y-4 pb-16 md:pb-0" data-agent-target="requests">
+    <div className="stagger space-y-4 pb-16 md:pb-0" data-agent-target="requests">
       <div className="flex items-end justify-between gap-3">
         <div>
           <h1>Заявки и справки</h1>

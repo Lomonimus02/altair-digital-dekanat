@@ -13,70 +13,95 @@ function wait(ms: number, signal: AbortSignal) {
 
 export function moveCursor(element: Element | null, on: boolean) {
   if (!(element instanceof HTMLElement)) {
-    window.dispatchEvent(new CustomEvent("altair-cursor", { detail: { on: false } }));
+    window.dispatchEvent(new CustomEvent("altair-cursor", { detail: { on: false, x: 0, y: 0 } }));
     return;
   }
   const box = element.getBoundingClientRect();
   window.dispatchEvent(new CustomEvent("altair-cursor", {
-    detail: { on, x: box.left + Math.min(28, box.width / 2), y: box.top + box.height / 2 },
+    detail: { on, x: box.left + Math.min(28, box.width / 2), y: box.top + Math.min(24, box.height / 2) },
   }));
 }
 
 export async function glideTo(selector: string, signal: AbortSignal) {
+  if (signal.aborted) return;
   const element = document.querySelector(selector);
   if (!(element instanceof HTMLElement)) return;
   element.scrollIntoView({ block: "center", behavior: reduced() ? "auto" : "smooth" });
-  await wait(reduced() ? 0 : 180, signal);
+  await wait(160, signal);
   moveCursor(element, true);
   element.classList.add("agent-shown");
-  await wait(reduced() ? 0 : 220, signal);
-  window.setTimeout(() => element.classList.remove("agent-shown"), reduced() ? 0 : 700);
+  window.setTimeout(() => element.classList.remove("agent-shown"), reduced() ? 0 : 900);
+  await wait(220, signal);
 }
 
 export async function typeField(field: string, value: string, signal: AbortSignal) {
-  const step = reduced() ? value.length : 1;
+  const step = reduced() ? value.length || 1 : 1;
   for (let i = step; i <= value.length; i += step) {
     if (signal.aborted) return;
     window.dispatchEvent(new CustomEvent("altair-fill", { detail: { field, value: value.slice(0, i) } }));
-    await wait(16, signal);
+    await wait(18, signal);
   }
+  if (!value) window.dispatchEvent(new CustomEvent("altair-fill", { detail: { field, value: "" } }));
 }
 
-export async function playTurn(
-  tools: string[],
-  fields: { label: string; value: string }[],
-  navigate: (to: string) => void,
-  signal: AbortSignal,
-) {
-  const openSchedule = tools.includes("get_schedule");
-  const openRequests = tools.includes("list_requests") || tools.includes("create_request") || tools.includes("cancel_request");
-  const openHomework = tools.includes("list_homework") || tools.includes("submit_homework") || tools.includes("save_homework");
-  const openGrades = tools.includes("get_grades") || tools.includes("get_session_navigator");
-  const openNotes = tools.includes("mark_notifications_read");
-  const target = openSchedule
-    ? "[data-agent-action='nav-schedule']"
-    : openRequests
-      ? "[data-agent-action='nav-requests'], [data-agent-action='request-new']"
-      : openHomework
-        ? "[data-agent-action='nav-homework']"
-        : openGrades
-          ? "[data-agent-action='nav-grades']"
-          : openNotes
-            ? "[data-agent-action='nav-notifications'], [data-agent-action='notification-read-all']"
-            : "";
-  if (target) await glideTo(target, signal);
-  if (tools.includes("create_request")) {
-    navigate("/requests/new");
-    await wait(360, signal);
-    const purpose = fields.find((field) => field.label === "Назначение")?.value;
-    const comment = fields.find((field) => field.label === "Комментарий")?.value;
-    if (purpose) await typeField("purpose", purpose, signal);
-    if (comment) await typeField("comment", comment, signal);
-    await glideTo("[data-agent-action='request-submit']", signal);
+const FIELD: Record<string, string> = {
+  Назначение: "purpose",
+  Комментарий: "comment",
+  Текст: "homework-body",
+  Условие: "description",
+  Название: "title",
+  Срок: "deadline",
+  Группа: "group",
+  Предмет: "discipline",
+  Заголовок: "announce-title",
+};
+
+export async function playTurn(input: {
+  tools: string[];
+  open?: string;
+  fields: { label: string; value: string }[];
+  navigate: (to: string) => void;
+  signal: AbortSignal;
+  onStep: (label: string) => void;
+}) {
+  const { tools, open, fields, navigate, signal, onStep } = input;
+  const selector =
+    tools.includes("update_settings") ? "[data-agent-action='theme-toggle']"
+    : tools.includes("mark_schedule_item") ? "[data-agent-action='schedule-star']"
+    : tools.includes("mark_notifications_read") ? "[data-agent-action='notification-read-all']"
+    : tools.includes("teacher_list_submissions") ? "[data-agent-action='nav-queue']"
+    : tools.includes("staff_list_inbox") || tools.includes("staff_set_status") ? "[data-agent-action='nav-staff']"
+    : tools.includes("get_schedule") ? "[data-agent-action='nav-schedule']"
+    : tools.includes("list_homework") || tools.includes("submit_homework") ? "[data-agent-action='nav-homework']"
+    : tools.includes("get_grades") || tools.includes("get_session_navigator") ? "[data-agent-action='nav-grades']"
+    : tools.includes("list_requests") || tools.includes("create_request") ? "[data-agent-action='nav-requests'], [data-agent-action='request-new']"
+    : tools.includes("teacher_home") ? "[data-agent-action='nav-teach']"
+    : "";
+  if (selector) {
+    onStep("Открываю раздел…");
+    await glideTo(selector, signal);
   }
-  if (tools.includes("submit_homework")) {
-    const body = fields.find((field) => /текст|коммент|работа/i.test(field.label))?.value;
-    if (body) await typeField("homework-body", body, signal);
-    await glideTo("[data-agent-action='homework-submit']", signal);
+  if (signal.aborted) return;
+  if (open) {
+    navigate(open);
+    await wait(420, signal);
+  }
+  if (signal.aborted) return;
+  const form = tools.find((tool) => ["create_request", "submit_homework", "teacher_issue_assignment", "staff_publish_announcement"].includes(tool));
+  if (form) {
+    onStep("Заполняю форму…");
+    for (const field of fields) {
+      const name = form === "submit_homework"
+        ? (field.label === "Комментарий" || field.label === "Текст" ? "homework-body" : "")
+        : form === "staff_publish_announcement"
+          ? (field.label === "Заголовок" || field.label === "Название" ? "announce-title" : field.label === "Текст" || field.label === "Комментарий" ? "announce-body" : "")
+          : FIELD[field.label] ?? "";
+      if (!name || !field.value) continue;
+      await glideTo(`[data-agent-field='${name}']`, signal);
+      await typeField(name, field.value, signal);
+    }
+    const submit = form === "create_request" ? "request-submit" : form === "submit_homework" ? "homework-submit" : form === "teacher_issue_assignment" ? "teach-issue" : "staff-publish";
+    await glideTo(`[data-agent-action='${submit}']`, signal);
+    onStep("Жду подтверждение…");
   }
 }

@@ -87,10 +87,11 @@ export const schemas = {
       scheduleItemId: z.number().int().positive().optional(),
       subject: z.string().max(160).optional(),
       when: z.enum(["today", "tomorrow", "day_after"]).optional(),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       flagged: z.boolean().default(true),
     })
     .refine((v) => v.scheduleItemId != null || (v.subject != null && v.subject.length > 1), "Нужно занятие"),
-  staff_list_inbox: z.object({}),
+  staff_list_inbox: z.object({ status: z.enum(["submitted", "in_progress", "ready", "issued", "rejected", "withdrawn"]).optional() }),
   staff_triage: z.object({ requestId: z.number().int().positive() }),
   staff_set_status: z
     .object({
@@ -121,6 +122,7 @@ export const schemas = {
   submit_homework: z.object({
     assignmentId: z.number().int().positive().optional(),
     subject: z.string().trim().max(160).optional(),
+    pick: z.enum(["nearest"]).optional(),
     body: z.string().trim().min(2).max(4000),
     links: z.array(z.object({ title: z.string().max(120), href: z.string().url().max(400) })).max(5).optional(),
   }).refine((value) => value.assignmentId != null || (value.subject && value.subject.length > 1), "Нужно задание"),
@@ -130,7 +132,7 @@ export const schemas = {
   }),
   teacher_issue_assignment: z.object({
     groupName: z.string().trim().min(2).max(40),
-    discipline: z.string().trim().min(2).max(160),
+    discipline: z.string().trim().min(2).max(160).optional(),
     title: z.string().trim().min(3).max(160),
     description: z.string().trim().min(3).max(2000),
     kind: z.enum(["essay", "problem_set", "lab", "reading", "project"]),

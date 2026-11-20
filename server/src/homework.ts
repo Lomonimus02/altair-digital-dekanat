@@ -417,7 +417,7 @@ export async function resolveStudentAssignment(user: PublicUser, subject: string
   }
   if (submittable.length === 1) return { id: submittable[0].id, title: submittable[0].title, discipline: submittable[0].discipline };
   return {
-    options: submittable.map((row) => ({ id: row.id, title: row.title, discipline: row.discipline, statusLabel: row.submission.statusLabel })),
+    options: submittable.map((row) => ({ id: row.id, title: row.title, discipline: row.discipline, statusLabel: row.submission.statusLabel, deadline: row.deadline })),
   };
 }
 

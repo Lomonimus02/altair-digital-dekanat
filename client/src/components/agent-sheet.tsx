@@ -105,7 +105,7 @@ export function AgentSheet({ mode }: { mode: "sheet" | "drawer" }) {
               key="agent-peek"
               type="button"
               className="sheet-solid fixed z-[80] flex min-h-14 w-[min(18rem,calc(100%-6.5rem))] items-center justify-between gap-3 rounded-full px-4 text-left"
-              style={{ right: "5.5rem", bottom: "max(16px, env(safe-area-inset-bottom))" }}
+              style={{ left: 12, right: 12, bottom: "calc(6.25rem + env(safe-area-inset-bottom))", width: "auto" }}
               initial={{ y: 24, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 24, opacity: 0, pointerEvents: "none" }}

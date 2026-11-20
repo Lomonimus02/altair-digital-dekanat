@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { CHANGE_LABEL, KIND_LABEL, type LessonView } from "@shared/domain";
-import { formatDdMm, formatWeekSpan, scheduleLook } from "@shared/dates";
+import { addDays, formatDdMm, formatWeekSpan, scheduleLook } from "@shared/dates";
 import { useAuth } from "../lib/auth";
 import { Star } from "lucide-react";
 import { useRef } from "react";
@@ -51,9 +51,7 @@ export function SchedulePage() {
     else {
       const monday = schedule.data!.days[0]?.date;
       if (!monday) return;
-      const base = new Date(`${monday}T00:00:00Z`);
-      base.setUTCDate(base.getUTCDate() + (delta > 0 ? 7 : -7));
-      setParams({ date: base.toISOString().slice(0, 10) });
+      setParams({ date: delta < 0 ? addDays(monday, -2) : addDays(monday, 7) });
     }
   };
 
@@ -147,7 +145,7 @@ function Lesson({ lesson }: { lesson: LessonView }) {
       <div className="flex items-start gap-3">
         <div className="w-24 shrink-0 text-sm font-semibold leading-tight">{lesson.startsAt}–{lesson.endsAt}</div>
         <div className="min-w-0 flex-1">
-          <h3 className="truncate font-semibold">{lesson.discipline}</h3>
+          <h3 className="line-clamp-2 font-semibold leading-snug">{lesson.discipline}</h3>
           {lesson.changeType !== "none" ? <div className="mt-1"><Pill tone={tone}>{CHANGE_LABEL[lesson.changeType]}</Pill></div> : null}
           <p className="text-sm text-[var(--muted)]">{KIND_LABEL[lesson.kind]} · ауд. {lesson.room}{who ? ` · ${who}` : ""}</p>
           {lesson.changeNote ? <p className="mt-1 text-sm">{lesson.changeNote}</p> : null}

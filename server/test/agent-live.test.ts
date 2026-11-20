@@ -53,21 +53,21 @@ it("живые фразы по сиду проходят через API", async 
     } else if (item.check === "return") {
       ok = !say.includes("не нашёл") && (fields["Комментарий"] === "добавь ER-диаграмму" || (body.choices?.length ?? 0) > 1);
     } else if (item.check === "submit") {
-      ok = !say.includes("Такого задания нет") && (body.choices?.length ?? 0) >= 2 && !body.ui?.some((entry) => entry.type === "navigate");
+      ok = !say.includes("Такого задания нет") && (body.choices?.length ?? 0) >= 2;
     } else if (item.check === "remind") {
       ok = /Лабораторная|Задачник|индекс|SELECT|нормальн/.test(say) && Boolean(body.undo) && !/^Напоминание «Дедлайн»/.test(say);
     } else if (item.check === "debts") {
-      ok = !say.startsWith("Подходящих заданий нет") && /рекурси|нормальн|доработ|риск|автомат|алгебр/i.test(say) && Boolean(body.cards?.length) && !body.ui?.some((entry) => entry.type === "navigate");
+      ok = !say.startsWith("Подходящих заданий нет") && /рекурси|нормальн|доработ|риск|автомат|алгебр/i.test(say) && Boolean(body.cards?.length);
     } else if (item.check === "schedule") {
-      ok = Boolean(body.cards?.length) && body.link?.to.includes("/schedule") && !body.ui?.some((entry) => entry.type === "navigate");
+      ok = Boolean(body.cards?.length) && Boolean(body.ui?.some((entry) => entry.to?.includes("/schedule")));
     } else if (item.check === "open") {
       ok = Boolean(body.ui?.some((entry) => entry.to?.includes("/schedule")));
     } else if (item.check === "order") {
-      ok = fields["Документ"] === "Справка об обучении" && /воен/.test(fields["Назначение"] ?? "") && !body.ui?.some((entry) => entry.type === "navigate");
+      ok = fields["Документ"] === "Справка об обучении" && /воен/.test(fields["Назначение"] ?? "");
     } else if (item.check === "teach") {
-      ok = /проверк/i.test(say) && Boolean(body.cards?.some((card) => card.rows.some((row) => row.label === "На проверке"))) && !body.ui?.some((entry) => entry.type === "navigate");
+      ok = /проверк/i.test(say) && Boolean(body.cards?.some((card) => card.rows.some((row) => row.label === "На проверке")));
     } else if (item.check === "volkova") {
-      ok = (fields["Студент"] ?? "").includes("Волкова") && /информац/i.test(fields["Предмет"] ?? "") && Boolean(body.confirm) && !body.ui?.some((entry) => entry.type === "navigate");
+      ok = (fields["Студент"] ?? "").includes("Волкова") && /информац/i.test(fields["Предмет"] ?? "") && Boolean(body.confirm);
     } else if (item.check === "roll") {
       ok = Boolean(body.ui?.some((entry) => entry.to?.includes("/teach/journal")));
     } else if (item.check === "certs") {

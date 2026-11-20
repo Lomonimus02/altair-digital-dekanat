@@ -152,14 +152,46 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
       }
       const navigateTo = response.ui?.find((item) => item.type === "navigate");
       const wide = window.matchMedia("(min-width: 768px)").matches;
-      const line = navigateTo && !response.say.trim() ? navSentence(navigateTo.to) : "";
       const say = response.say;
+      const abort = new AbortController();
+      abortRef.current = abort;
+      const tools = (response.steps ?? []).flatMap((step) => (step.tool ? [step.tool] : []));
+      const first = response.steps?.find((step) => step.status === "ok")?.label ?? "Выполняю…";
+      setOperator(first);
+      if (!wide) {
+        setPeekLine(first);
+        setPeek(true);
+        setOpen(true);
+      }
+      inputRef.current?.blur();
+      await playTurn({
+        tools,
+        open: response.open ?? navigateTo?.to,
+        fields: response.confirm?.fields ?? [],
+        navigate,
+        signal: abort.signal,
+        onStep: (label) => {
+          setOperator(label);
+          if (!wide) setPeekLine(label);
+        },
+      });
+      if (!abort.signal.aborted) await play(response.ui?.filter((item) => item.type !== "navigate"), response.steps, Boolean(navigateTo));
+      setOperator(null);
+      window.dispatchEvent(new CustomEvent("altair-cursor", { detail: { on: false, x: 0, y: 0 } }));
+      if (abort.signal.aborted) {
+        if (response.confirm) {
+          await api("/api/agent/reject", { method: "POST", body: JSON.stringify({ pendingId: response.confirm.pendingId }) }).catch(() => undefined);
+        }
+        toast("Остановлено");
+        setMessages((current) => [...current, { id: rid(), role: "agent", text: "Остановлено. Ничего не отправил." }]);
+        return;
+      }
       setMessages((current) => [
         ...current,
         {
           id: rid(),
           role: "agent",
-          text: [line, say].filter(Boolean).join("\n\n"),
+          text: say,
           caption: response.caption === "Быстрый режим" ? "Локальный режим" : response.caption,
           steps: response.steps,
           confirm: response.confirm,
@@ -171,32 +203,9 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
           choices: response.choices,
         },
       ]);
-      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches && line) {
-        await new Promise((resolve) => window.setTimeout(resolve, 420));
-      }
-      inputRef.current?.blur();
-      const abort = new AbortController();
-      abortRef.current = abort;
-      const tools = (response.steps ?? []).flatMap((step) => (step.tool ? [step.tool] : []));
-      if (tools.length) {
-        setOperator(response.steps?.find((step) => step.status === "ok")?.label ?? "Выполняю…");
-        if (!wide) {
-          setPeekLine(response.steps?.find((step) => step.status === "ok")?.label ?? "Выполняю");
-          setPeek(true);
-          setOpen(true);
-        }
-        await playTurn(tools, response.confirm?.fields ?? [], navigate, abort.signal);
-      }
-      await play(response.ui, response.steps, Boolean(navigateTo));
-      if (response.confirm && !wide) {
+      if (!wide) {
         setPeek(false);
         setOpen(true);
-      }
-      setOperator(null);
-      window.dispatchEvent(new CustomEvent("altair-cursor", { detail: { on: false, x: 0, y: 0 } }));
-      if (navigateTo && !wide) {
-        setPeekLine(specificPeek(navigateTo.to, say));
-        setPeek(true);
       }
     } catch (error) {
       const textError = error instanceof ApiError ? error.message : "Не получилось ответить";
@@ -409,6 +418,7 @@ interface Turn {
   cards?: AnswerCard[];
   choices?: ChoiceChip[];
   link?: { to: string; label: string };
+  open?: string;
 }
 
 interface ActionResult {
