@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
-import { addDays, formatRuDate, moscowToday, nearestStudyDay } from "../../shared/src/dates";
+import { addDays, formatRuDate, moscowNow, moscowToday, nearestStudyDay } from "../../shared/src/dates";
 import type { PublicUser } from "../../shared/src/domain";
 import { matchDiscipline } from "../../shared/src/parser";
 import { samePerson, toDative } from "../../shared/src/names";
@@ -487,7 +487,7 @@ export async function remindDeadline(user: PublicUser, subject: string) {
   const found = matchDiscipline(subject, names);
   const pool = rows.filter((row) => row.submission.status !== "graded" && (!found || row.discipline === found));
   const ordered = [...pool].sort((a, b) => a.deadline.localeCompare(b.deadline));
-  const now = Date.now();
+  const now = moscowNow().getTime();
   for (const row of ordered) {
     const end = new Date(`${row.deadline}T23:00:00+03:00`);
     if (end.getTime() <= now) continue;

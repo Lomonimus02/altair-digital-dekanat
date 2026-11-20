@@ -1233,7 +1233,7 @@ export async function runTurn(
   mode: "device" | "fallback" | "server" | "cloud";
   caption: string;
   say: string;
-  steps: { label: string; status: "ok" | "error" | "skipped"; detail?: string }[];
+  steps: { label: string; status: "ok" | "error" | "skipped"; detail?: string; tool?: string }[];
   ui: UiDirective[];
   confirm?: ConfirmCard;
   citations?: Citation[];
@@ -1280,7 +1280,7 @@ export async function runTurn(
     caption = "Быстрый режим";
   }
 
-  const steps: { label: string; status: "ok" | "error" | "skipped"; detail?: string }[] = [];
+  const steps: { label: string; status: "ok" | "error" | "skipped"; detail?: string; tool?: string }[] = [];
   const ui: UiDirective[] = [];
   const cards: AnswerCard[] = [];
   let choices: ChoiceChip[] | undefined;
@@ -1292,12 +1292,12 @@ export async function runTurn(
   for (const call of proposal.steps) {
     const label = stepLabel(call.tool, call.args);
     if (stopped) {
-      steps.push({ label, status: "skipped", detail: "Ждёт подтверждения предыдущего шага." });
+      steps.push({ label, status: "skipped", detail: "Ждёт подтверждения предыдущего шага.", tool: call.tool });
       continue;
     }
     try {
       const result = await perform(user, call.tool, call.args, { source: "agent", confirmed: false });
-      steps.push({ label, status: "ok", detail: result.summary || undefined });
+      steps.push({ label, status: "ok", detail: result.summary || undefined, tool: call.tool });
       ui.push(...(result.ui ?? []));
       if (result.citations?.length) citations = result.citations;
       if (result.download) download = result.download;
@@ -1310,13 +1310,13 @@ export async function runTurn(
       }
     } catch (error) {
       const detail = error instanceof HttpError ? error.message : "Не получилось выполнить шаг.";
-      steps.push({ label, status: "error", detail });
+      steps.push({ label, status: "error", detail, tool: call.tool });
     }
   }
   const details = steps.map((step) => step.detail).filter((detail): detail is string => Boolean(detail));
   const say = details.length ? details.join("\n\n") : proposal.say || "Уточните, пожалуйста, что сделать.";
   const acted = !confirm && proposal.steps.some((call, index) => steps[index]?.status === "ok" && ACT_TOOLS.has(call.tool));
-  const explicit = /открой|перейди|покажи на странице|покажи страницу|покажи в журнале/i.test(input.message);
+  const explicit = /открой|перейди|покажи на странице|покажи страницу|покажи в журнале|покажи расписан/i.test(input.message);
   let nextUi = dedupeUi(ui);
   let link: { to: string; label: string } | undefined;
   if (!acted && !explicit) {

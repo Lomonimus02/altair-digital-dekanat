@@ -5,6 +5,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode,
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { api, ApiError } from "./api";
+import { playTurn } from "./operator";
 import { applyDirectives } from "./theme";
 import { hasWebGPU, loadModel, proposeLocally, suggestedSize, type ModelSize } from "./webllm";
 
@@ -13,7 +14,7 @@ export interface AgentMessage {
   role: "user" | "agent";
   text: string;
   caption?: string;
-  steps?: { label: string; status: "ok" | "error" | "skipped" | "wait" }[];
+  steps?: { label: string; status: "ok" | "error" | "skipped" | "wait"; tool?: string }[];
   confirm?: ConfirmCard;
   citations?: Citation[];
   download?: { href: string; label: string };
@@ -51,6 +52,8 @@ interface AgentValue {
   useServer: boolean;
   setUseServer: (value: boolean) => void;
   inputRef: RefObject<HTMLTextAreaElement | null>;
+  operator: string | null;
+  stop: () => void;
 }
 
 const AgentContext = createContext<AgentValue | null>(null);
@@ -87,6 +90,8 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
   const [useServer, setUseServer] = useState(false);
   const ready = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const [operator, setOperator] = useState<string | null>(null);
   const config = useQuery({ queryKey: ["agent-config"], queryFn: () => api<{ serverModel: boolean }>("/api/agent/config") });
 
   useEffect(() => {
@@ -170,7 +175,25 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
         await new Promise((resolve) => window.setTimeout(resolve, 420));
       }
       inputRef.current?.blur();
+      const abort = new AbortController();
+      abortRef.current = abort;
+      const tools = (response.steps ?? []).flatMap((step) => (step.tool ? [step.tool] : []));
+      if (tools.length) {
+        setOperator(response.steps?.find((step) => step.status === "ok")?.label ?? "Выполняю…");
+        if (!wide) {
+          setPeekLine(response.steps?.find((step) => step.status === "ok")?.label ?? "Выполняю");
+          setPeek(true);
+          setOpen(true);
+        }
+        await playTurn(tools, response.confirm?.fields ?? [], navigate, abort.signal);
+      }
       await play(response.ui, response.steps, Boolean(navigateTo));
+      if (response.confirm && !wide) {
+        setPeek(false);
+        setOpen(true);
+      }
+      setOperator(null);
+      window.dispatchEvent(new CustomEvent("altair-cursor", { detail: { on: false, x: 0, y: 0 } }));
       if (navigateTo && !wide) {
         setPeekLine(specificPeek(navigateTo.to, say));
         setPeek(true);
@@ -179,6 +202,7 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
       const textError = error instanceof ApiError ? error.message : "Не получилось ответить";
       setMessages((current) => [...current, { id: rid(), role: "agent", text: textError }]);
     } finally {
+      setOperator(null);
       setBusy(false);
     }
   };
@@ -325,6 +349,12 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
     useServer,
     setUseServer,
     inputRef,
+    operator,
+    stop: () => {
+      abortRef.current?.abort();
+      setOperator(null);
+      window.dispatchEvent(new CustomEvent("altair-cursor", { detail: { on: false, x: 0, y: 0 } }));
+    },
   };
 
   return <AgentContext.Provider value={value}>{children}</AgentContext.Provider>;

@@ -10,6 +10,7 @@ import { useAuth } from "../lib/auth";
 import { AgentSheet, useKeyboardInset } from "./agent-sheet";
 import { AgentPanel } from "./agent-panel";
 import { ContestNote, Mark } from "./ui";
+import { OperatorChrome } from "./operator-chrome";
 
 export function Shell() {
   const { user, logout } = useAuth();
@@ -78,36 +79,36 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
   const teacher = user?.role === "teacher";
   const links = teacher
     ? [
-        { to: "/teach", label: "Сегодня", icon: House, end: true },
-        { to: "/schedule", label: "Расписание", short: "Пары", icon: CalendarDays },
-        { to: "/teach/journal", label: "Журнал", icon: GraduationCap },
-        { to: "/teach/homework", label: "Проверка", icon: FileText },
+        { to: "/teach", label: "Сегодня", icon: House, end: true, action: "nav-teach" },
+        { to: "/schedule", label: "Расписание", short: "Пары", icon: CalendarDays, action: "nav-schedule" },
+        { to: "/teach/journal", label: "Журнал", icon: GraduationCap, action: "nav-journal" },
+        { to: "/teach/homework", label: "Проверка", icon: FileText, action: "nav-queue" },
         { to: "/teach/assign", label: "Задание", icon: ClipboardList },
         { to: "/teach/announce", label: "Группы", icon: Megaphone },
-        { to: "/notifications", label: "Уведомления", icon: Bell, badge: unread },
+        { to: "/notifications", label: "Уведомления", icon: Bell, badge: unread, action: "nav-notifications" },
         { to: "/profile", label: "Профиль", icon: UserRound },
       ]
     : student
     ? [
-        { to: "/", label: "Главная", icon: House, end: true },
-        { to: "/schedule", label: "Расписание", short: "Пары", icon: CalendarDays },
-        { to: "/homework", label: "Задания", icon: FileText },
-        { to: "/grades", label: "Оценки", icon: GraduationCap },
-        { to: "/requests", label: "Заявки", icon: ScrollText },
-        { to: "/notifications", label: "Уведомления", icon: Bell, badge: unread },
+        { to: "/", label: "Главная", icon: House, end: true, action: "nav-home" },
+        { to: "/schedule", label: "Расписание", short: "Пары", icon: CalendarDays, action: "nav-schedule" },
+        { to: "/homework", label: "Задания", icon: FileText, action: "nav-homework" },
+        { to: "/grades", label: "Оценки", icon: GraduationCap, action: "nav-grades" },
+        { to: "/requests", label: "Заявки", icon: ScrollText, action: "nav-requests" },
+        { to: "/notifications", label: "Уведомления", icon: Bell, badge: unread, action: "nav-notifications" },
         { to: "/regulations", label: "Регламенты", icon: ScrollText },
         { to: "/audit", label: "Журнал агента", icon: Sparkles },
         { to: "/profile", label: "Профиль", icon: UserRound },
       ]
     : [
-        { to: "/staff", label: "Входящие", icon: Inbox, end: true },
-        { to: "/staff/announcements", label: "Новости", icon: Megaphone },
-        { to: "/notifications", label: "Уведомления", icon: Bell, badge: unread },
+        { to: "/staff", label: "Входящие", icon: Inbox, end: true, action: "nav-staff" },
+        { to: "/staff/announcements", label: "Новости", icon: Megaphone, action: "nav-news" },
+        { to: "/notifications", label: "Уведомления", icon: Bell, badge: unread, action: "nav-notifications" },
         { to: "/regulations", label: "Регламенты", icon: ScrollText },
         { to: "/audit", label: "Журнал", icon: Sparkles },
         { to: "/profile", label: "Профиль", icon: UserRound },
       ];
-  const tabs = teacher ? [links[0], links[1], links[2], links[3]] : student ? [links[0], links[1], links[2], links[3]] : [links[0], links[1], links[4]];
+  const tabs = [links[0], links[1], links[2]];
   const tabTargets = new Set(tabs.map((link) => link.to));
   const moreLinks = links.filter((link) => !tabTargets.has(link.to));
 
@@ -152,9 +153,9 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
           <AnimatePresence initial={false}>
             <motion.div
               key={location.pathname}
-              initial={reduce ? false : { opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: reduce ? 0 : 0.2 }}
+              initial={reduce ? false : location.pathname.split("/").length > 2 ? { opacity: 0, x: 28 } : { opacity: 0 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: reduce ? 0 : 0.22 }}
             >
               <Outlet />
             </motion.div>
@@ -169,6 +170,7 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
       {wide && !xl ? <AgentSheet mode="drawer" /> : !wide ? (
         <>
           {!agent.open || agent.peek ? <MobileNav tabs={tabs} onMore={() => setMore(true)} onAgent={() => { agent.setPeek(false); agent.setOpen(true); }} /> : null}
+          <OperatorChrome />
           <AgentSheet mode="sheet" />
           <MoreSheet open={more} links={moreLinks} onClose={() => setMore(false)} onLogout={() => void logout()} />
         </>
@@ -182,7 +184,7 @@ function MobileNav({
   onMore,
   onAgent,
 }: {
-  tabs: { to: string; label: string; short?: string; icon: typeof House; end?: boolean }[];
+  tabs: { to: string; label: string; short?: string; icon: typeof House; end?: boolean; action?: string }[];
   onMore: () => void;
   onAgent: () => void;
 }) {
@@ -199,31 +201,41 @@ function MobileNav({
   }, []);
   return (
     <nav
-      className={`fixed inset-x-4 z-50 mx-auto grid w-[calc(100%-2rem)] max-w-md grid-cols-[minmax(0,1fr)_auto] items-center gap-2 transition-transform duration-300 ease-out md:hidden ${hidden ? "translate-y-[calc(100%+2rem)]" : "translate-y-0"}`}
-      style={{ bottom: "max(16px, env(safe-area-inset-bottom))" }}
+      className={`fixed inset-x-3 z-50 mx-auto max-w-md transition-transform duration-300 ease-out md:hidden ${hidden ? "translate-y-[calc(100%+2rem)]" : "translate-y-0"}`}
+      style={{ bottom: "max(10px, env(safe-area-inset-bottom))" }}
       aria-label="Нижняя навигация"
     >
-      <div className="mobile-nav-pill grid min-h-14 min-w-0 auto-cols-fr grid-flow-col items-center rounded-full px-1">
-        {tabs.map((link) => (
-          <NavLink key={link.to} to={link.to} end={link.end} className="relative flex min-h-11 min-w-0 flex-col items-center justify-center rounded-full px-0.5 py-1 active:scale-95">
-            {({ isActive }) => (
-              <>
-                {isActive ? <motion.span layoutId="mobileActive" className="absolute inset-1 rounded-full bg-white/80 dark:bg-white/10" transition={{ type: "spring", stiffness: 350, damping: 30 }} /> : null}
-                <link.icon className={`relative h-5 w-5 ${isActive ? "text-[var(--primary)]" : ""}`} />
-                <span className="relative max-w-full text-[10px] font-medium leading-tight">{link.short ?? link.label}</span>
-              </>
-            )}
-          </NavLink>
+      <div className="mobile-nav-pill grid min-h-[4.25rem] grid-cols-5 items-end rounded-[28px] px-1 pb-1 pt-1">
+        {tabs.slice(0, 2).map((link) => (
+          <TabLink key={link.to} link={link} />
         ))}
-        <button type="button" className="flex min-h-11 min-w-0 flex-col items-center justify-center rounded-full px-0.5 py-1 active:scale-95" onClick={onMore}>
+        <button type="button" data-agent-action="nav-agent" className="tap relative -top-3 grid h-14 w-14 justify-self-center place-items-center rounded-full bg-[var(--primary)] text-[var(--primary-ink)] shadow-[0_10px_24px_-12px_rgba(2,191,122,0.9)]" aria-label="Спросить деканат" onClick={onAgent}>
+          <Sparkles className="h-6 w-6" />
+        </button>
+        {tabs.slice(2, 3).map((link) => (
+          <TabLink key={link.to} link={link} />
+        ))}
+        <button type="button" data-agent-action="nav-more" className="tap flex min-h-11 flex-col items-center justify-center rounded-full" onClick={onMore}>
           <Menu className="h-5 w-5" />
-          <span className="max-w-full truncate text-[11px] font-medium leading-tight">Ещё</span>
+          <span className="text-[10px] font-medium">Ещё</span>
         </button>
       </div>
-      <button type="button" className="mobile-nav-pill grid h-14 w-14 shrink-0 place-items-center rounded-full active:scale-95" aria-label="Спросить деканат" onClick={onAgent}>
-        <Sparkles className="h-6 w-6 text-[var(--primary)]" />
-      </button>
     </nav>
+  );
+}
+
+function TabLink({ link }: { link: { to: string; label: string; short?: string; icon: typeof House; end?: boolean; action?: string } }) {
+  const reduce = useReducedMotion();
+  return (
+    <NavLink to={link.to} end={link.end} data-agent-action={link.action} className="tap relative flex min-h-11 min-w-0 flex-col items-center justify-center rounded-full px-0.5 py-1">
+      {({ isActive }) => (
+        <>
+          {isActive ? <motion.span layoutId="mobileActive" className="absolute inset-1 rounded-full bg-white/80 dark:bg-white/10" transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 420, damping: 34 }} /> : null}
+          <link.icon className={`relative h-5 w-5 ${isActive ? "text-[var(--primary)]" : ""}`} />
+          <span className="relative max-w-full truncate text-[10px] font-medium leading-tight">{link.short ?? link.label}</span>
+        </>
+      )}
+    </NavLink>
   );
 }
 
@@ -314,7 +326,7 @@ function unreadLabel(unread: number) {
   return `Уведомления, ${unread} ${word}`;
 }
 
-function SideLink({ to, label, icon: Icon, end, badge, ariaLabel }: { to: string; label: string; icon: typeof House; end?: boolean; badge?: number; ariaLabel?: string }) {
+function SideLink({ to, label, icon: Icon, end, badge, ariaLabel, action }: { to: string; label: string; icon: typeof House; end?: boolean; badge?: number; ariaLabel?: string; action?: string }) {
   const [tip, setTip] = useState<number | null>(null);
   return (
     <NavLink
@@ -322,6 +334,7 @@ function SideLink({ to, label, icon: Icon, end, badge, ariaLabel }: { to: string
       end={end}
       title={label}
       aria-label={ariaLabel ?? label}
+      data-agent-action={action}
       className="group relative flex h-11 w-11 items-center justify-center gap-2 rounded-2xl text-sm xl:w-full xl:justify-start xl:px-3"
       onMouseEnter={(event) => setTip(event.currentTarget.getBoundingClientRect().top + 6)}
       onMouseLeave={() => setTip(null)}
@@ -383,6 +396,7 @@ function ThemeButton() {
     <button
       type="button"
       className="btn btn-quiet h-11 w-11 px-0"
+      data-agent-action="theme-toggle"
       aria-label={next === "dark" ? "Тёмная тема" : "Светлая тема"}
       onClick={() => {
         setDark(next === "dark");

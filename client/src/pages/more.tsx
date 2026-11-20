@@ -18,7 +18,7 @@ export function NotificationsPage() {
     <div className="space-y-3" data-agent-target="notifications">
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
         <h1 className="min-w-0">Уведомления</h1>
-        <Button className="h-11 shrink-0 whitespace-nowrap px-4" variant="glass" onClick={() => void run("mark_notifications_read", { all: true })}>Прочитать все</Button>
+        <Button className="h-11 shrink-0 whitespace-nowrap px-4" variant="glass" data-agent-action="notification-read-all" onClick={() => void run("mark_notifications_read", { all: true })}>Прочитать все</Button>
       </div>
       {items.length === 0 ? <EmptyState title="Тихо" text="Новых объявлений и напоминаний нет." /> : items.map((note) => {
         const body = (
@@ -27,7 +27,9 @@ export function NotificationsPage() {
               <h2 className="truncate font-semibold">{note.title}</h2>
               <p className="mt-1 line-clamp-2 text-sm text-[var(--muted)]">{note.body}</p>
             </div>
-            {!note.readAt ? <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-[var(--brand)]" aria-label="Не прочитано" /> : null}
+            {!note.readAt ? (
+              <button type="button" className="btn btn-quiet h-11 shrink-0 px-3" data-agent-action="notification-read" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void run("mark_notifications_read", { ids: [note.id] }); }}>Прочитано</button>
+            ) : null}
           </div>
         );
         return note.href ? (

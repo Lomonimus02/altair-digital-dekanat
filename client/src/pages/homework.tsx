@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { formatDdMm } from "@shared/dates";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAction } from "../lib/action";
@@ -110,6 +110,14 @@ export function HomeworkDetail() {
   const detail = useQuery({ queryKey: ["homework", id], queryFn: () => api<{ homework: Work; reminder: { title: string; dueAt: string } | null }>(`/api/homework/${id}`) });
   const [body, setBody] = useState("");
   const [error, setError] = useState("");
+  useEffect(() => {
+    const onFill = (event: Event) => {
+      const detail = (event as CustomEvent<{ field: string; value: string }>).detail;
+      if (detail.field === "homework-body") setBody(detail.value);
+    };
+    window.addEventListener("altair-fill", onFill);
+    return () => window.removeEventListener("altair-fill", onFill);
+  }, []);
   if (detail.isLoading) return <LoadingBlock />;
   if (detail.error || !detail.data) return <ErrorState text="Задание не найдено" />;
   const work = detail.data.homework;
@@ -144,12 +152,12 @@ export function HomeworkDetail() {
           <form className="space-y-3" onSubmit={(event) => event.preventDefault()}>
             <label className="block text-sm font-semibold">
               Текст работы
-              <textarea className="field mt-1 min-h-28 py-3" value={text} onChange={(event) => setBody(event.target.value)} />
+              <textarea className="field mt-1 min-h-28 py-3" data-agent-field="homework-body" value={text} onChange={(event) => setBody(event.target.value)} />
             </label>
             {error ? <p className="text-sm text-[var(--risk-high-fg)]">{error}</p> : null}
             <div className="form-sticky flex flex-wrap gap-2">
-              <Button variant="glass" className="h-11 px-4" onClick={() => void run("save_homework", { assignmentId: work.id, body: text }).catch((err: Error) => setError(err.message))}>Сохранить</Button>
-              <Button className="h-11 px-4" onClick={() => void run("submit_homework", { assignmentId: work.id, body: text }).then(() => detail.refetch()).catch((err: Error) => setError(err.message))}>Сдать</Button>
+              <Button variant="glass" className="h-11 px-4" data-agent-action="homework-save" onClick={() => void run("save_homework", { assignmentId: work.id, body: text }).catch((err: Error) => setError(err.message))}>Сохранить</Button>
+              <Button className="h-11 px-4" data-agent-action="homework-submit" onClick={() => void run("submit_homework", { assignmentId: work.id, body: text }).then(() => detail.refetch()).catch((err: Error) => setError(err.message))}>Сдать</Button>
             </div>
           </form>
         </Glass>

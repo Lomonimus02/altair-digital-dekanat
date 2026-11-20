@@ -185,7 +185,10 @@ function parseTeacher(t: string, raw: string): Proposal | null {
     return step("Смотрю непроверенные работы.", "teacher_list_submissions", group ? { group } : {});
   }
   if (/пары сегодня|мои группы|что (у меня )?сегодня|мои пары/.test(t)) return step("Смотрю пары на сегодня.", "teacher_home", {});
-  const grade = t.match(/поставь\s*([2-5]).{0,40}?([а-яё]{4,})/i) || t.match(/([а-яё]{4,}).{0,20}?(?:оценк\S*|поставь)\s*([2-5])/i);
+  const namedGrade = t.match(/поставь\s+([а-яё]{3,})\s+([2-5])/);
+  const grade = namedGrade
+    ? [namedGrade[0], namedGrade[2], namedGrade[1]] as RegExpMatchArray
+    : t.match(/поставь\s*([2-5]).{0,40}?([а-яё]{4,})/i) || t.match(/([а-яё]{4,}).{0,20}?(?:оценк\S*|поставь)\s*([2-5])/i);
   if (/доработ/.test(t) && /верн/.test(t)) {
     const comment = extractComment(raw);
     const bare = norm(raw.replace(/\s*(?:,)?\s*(?:с\s+комментарием|комментарий|коммент(?:арий|ом)?)\s*[:\-—]?[\s\S]*$/i, ""));
@@ -248,7 +251,9 @@ function parseTeacher(t: string, raw: string): Proposal | null {
 function parseStaff(t: string, raw: string): Proposal | null {
   const published = t.match(/опубликуй объявлени\S*\s*[:\-—]?\s*(.+)/);
   if (published?.[1]) {
-    const body = raw.slice(raw.toLowerCase().indexOf(published[1].slice(0, 12))).trim() || published[1];
+    const needle = published[1].slice(0, 12).toLowerCase().replace(/ё/g, "е");
+    const start = raw.toLowerCase().replace(/ё/g, "е").indexOf(needle);
+    const body = (start >= 0 ? raw.slice(start) : published[1]).trim();
     const title = body.split(/[.!?\n]/)[0].trim().slice(0, 140);
     return step("Показываю объявление перед публикацией.", "staff_publish_announcement", {
       title: title.length >= 3 ? title : body.slice(0, 140),

@@ -70,6 +70,10 @@ export function SchedulePage() {
           {look === "past" && focusDay ? <p className="text-sm text-[var(--muted)]">Прошедшая неделя: {shortDay(focusDay.weekday).toLowerCase()} {formatDdMm(focusDay.date)}</p> : null}
           {look === "later" && focusDay ? <p className="text-sm text-[var(--muted)]">Вы смотрите {shortDay(focusDay.weekday).toLowerCase()} {formatDdMm(focusDay.date)}</p> : null}
         </div>
+        <div className="flex items-center gap-1 rounded-full bg-white/50 p-1 dark:bg-white/10" role="group" aria-label="Период">
+          <button type="button" className="btn btn-quiet h-11 px-3" data-agent-action="schedule-today" onClick={() => setParams({ date: schedule.data!.today })}>Сегодня</button>
+          <button type="button" className="btn btn-quiet h-11 px-3" data-agent-action="schedule-week" onClick={() => setParams({ when: "week" })}>Неделя</button>
+        </div>
         <div className="hidden items-center gap-2 xl:flex">
           <button className="btn btn-glass h-11 px-4" onClick={() => shift(-7)}>Предыдущая неделя</button>
           <p className="px-2 text-sm font-semibold">{weekLabel(schedule.data.days)}</p>
@@ -143,16 +147,15 @@ function Lesson({ lesson }: { lesson: LessonView }) {
       <div className="flex items-start gap-3">
         <div className="w-24 shrink-0 text-sm font-semibold leading-tight">{lesson.startsAt}–{lesson.endsAt}</div>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="font-semibold">{lesson.discipline}</h3>
-            {lesson.changeType !== "none" ? <Pill tone={tone}>{CHANGE_LABEL[lesson.changeType]}</Pill> : null}
-          </div>
+          <h3 className="truncate font-semibold">{lesson.discipline}</h3>
+          {lesson.changeType !== "none" ? <div className="mt-1"><Pill tone={tone}>{CHANGE_LABEL[lesson.changeType]}</Pill></div> : null}
           <p className="text-sm text-[var(--muted)]">{KIND_LABEL[lesson.kind]} · ауд. {lesson.room}{who ? ` · ${who}` : ""}</p>
           {lesson.changeNote ? <p className="mt-1 text-sm">{lesson.changeNote}</p> : null}
         </div>
         {user?.role === "teacher" ? null : (
           <button
             className="btn btn-quiet h-11 w-11 shrink-0 px-0"
+            data-agent-action="schedule-star"
             aria-label={lesson.flagged ? "Снять отметку" : "Отметить занятие"}
             aria-pressed={lesson.flagged}
             onClick={() => void run("mark_schedule_item", { scheduleItemId: lesson.id, flagged: !lesson.flagged })}

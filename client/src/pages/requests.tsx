@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { REQUEST_KINDS, STATUS_LABEL, type RequestStatus } from "@shared/domain";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
 import { useAction } from "../lib/action";
@@ -25,13 +25,13 @@ export function RequestsPage() {
   if (list.isLoading) return <LoadingBlock />;
   if (list.error) return <ErrorState text="Заявки не загрузились" onRetry={() => void list.refetch()} />;
   return (
-    <div className="space-y-4" data-agent-target="requests">
+    <div className="space-y-4 pb-16 md:pb-0" data-agent-target="requests">
       <div className="flex items-end justify-between gap-3">
         <div>
           <h1>Заявки и справки</h1>
           <p className="text-sm text-[var(--muted)]">Справка об обучении появляется сразу. Остальное уходит в учебный офис.</p>
         </div>
-        <Link className="btn btn-primary" to="/requests/new">Новая</Link>
+        <Link className="btn btn-primary max-md:sr-only" to="/requests/new" data-agent-action="request-new">Новая</Link>
       </div>
       {list.data?.requests.length ? (
         list.data.requests.map((row) => (
@@ -46,8 +46,9 @@ export function RequestsPage() {
           </Link>
         ))
       ) : (
-        <EmptyState title="Заявок нет" text="Можно заказать справку об обучении — бланк будет готов сразу." action={<Link className="btn btn-primary" to="/requests/new">Заказать</Link>} />
+        <EmptyState title="Заявок нет" text="Можно заказать справку об обучении — бланк будет готов сразу." action={<Link className="btn btn-primary" to="/requests/new" data-agent-action="request-new">Заказать</Link>} />
       )}
+      <Link className="btn btn-primary fixed inset-x-4 z-40 md:hidden" style={{ bottom: "calc(5.75rem + env(safe-area-inset-bottom))" }} to="/requests/new" data-agent-action="request-new">Новая заявка</Link>
     </div>
   );
 }
@@ -60,6 +61,16 @@ export function NewRequestPage() {
   const [comment, setComment] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  useEffect(() => {
+    const onFill = (event: Event) => {
+      const detail = (event as CustomEvent<{ field: string; value: string }>).detail;
+      if (detail.field === "purpose") setPurpose(detail.value);
+      if (detail.field === "comment") setComment(detail.value);
+      if (detail.field === "kind") setKind(detail.value);
+    };
+    window.addEventListener("altair-fill", onFill);
+    return () => window.removeEventListener("altair-fill", onFill);
+  }, []);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setPending(true);
@@ -83,15 +94,15 @@ export function NewRequestPage() {
         <Choice label="Что нужно" value={kind} options={REQUEST_KINDS.map((item) => ({ value: item.id, label: `${item.title}${item.instant ? " · сразу" : ""}` }))} onChange={setKind} />
         <label className="mt-3 block text-sm font-semibold">
           Назначение
-          <input className="field mt-1" value={purpose} onChange={(event) => setPurpose(event.target.value)} placeholder="Куда и зачем" />
+          <input className="field mt-1" data-agent-field="purpose" value={purpose} onChange={(event) => setPurpose(event.target.value)} placeholder="Куда и зачем" />
         </label>
         <label className="mt-3 block text-sm font-semibold">
           Комментарий
-          <textarea className="field mt-1 min-h-28 py-3" value={comment} onChange={(event) => setComment(event.target.value)} />
+          <textarea className="field mt-1 min-h-28 py-3" data-agent-field="comment" value={comment} onChange={(event) => setComment(event.target.value)} />
         </label>
         {error ? <p className="mt-3 text-sm text-[var(--risk-high-fg)]">{error}</p> : null}
         <div className="form-sticky mt-4">
-          <Button disabled={pending}>{pending ? "Отправляем…" : "Подать"}</Button>
+          <Button disabled={pending} data-agent-action="request-submit">{pending ? "Отправляем…" : "Подать"}</Button>
         </div>
       </Glass>
     </form>
@@ -134,7 +145,7 @@ export function RequestPage() {
         <div className="mt-4 flex flex-wrap gap-2">
           {row.downloadable ? <a className="btn btn-primary" href={`/api/requests/${row.id}/pdf`}>Скачать PDF</a> : null}
           {row.status === "submitted" || row.status === "in_progress" ? (
-            <Button variant="glass" onClick={() => void run("cancel_request", { requestId: row.id })}>Отозвать</Button>
+            <Button variant="glass" data-agent-action="request-cancel" onClick={() => void run("cancel_request", { requestId: row.id })}>Отозвать</Button>
           ) : null}
         </div>
       </Glass>

@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
-import { setClock } from "../../shared/src/dates";
+import { moscowToday, setClock } from "../../shared/src/dates";
 import { buildApp } from "../src/app";
 import { seed } from "../src/db/seed";
 import { seedHomework } from "../src/db/seed-homework";
@@ -114,6 +114,7 @@ it("подтверждение заменяет карточку в журнал
   expect(events.filter((event) => event.action === "teacher_grade_homework")).toHaveLength(1);
 
   const student = await login("sorokin.mo", "Altair-student-31");
+  setClock(`${moscowToday()}T10:00:00+03:00`);
   await turn(student, "напомни о дедлайне по базам данных");
   const again = await turn(student, "напомни о дедлайне по базам данных");
   expect(again.say).toMatch(/уже стоит/);

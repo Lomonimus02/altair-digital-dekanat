@@ -47,6 +47,12 @@ export function GradesPage() {
         <p className="text-sm text-[var(--muted)]">Как идёт сессия и что нужно для автомата.</p>
       </div>
       <Choice label="Семестр" value={grades.data.semester} options={grades.data.semesters.map((item) => ({ value: item.id, label: item.label }))} onChange={(value) => setParams({ semester: value })} />
+      <div className="chip-row -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+        <button type="button" className="btn btn-quiet h-11 shrink-0 px-3" data-agent-action="grades-open" onClick={() => setParams({ semester: grades.data!.semester })}>Все</button>
+        {grades.data.items.map((item) => (
+          <button key={item.id} type="button" className={`btn btn-quiet h-11 shrink-0 px-3 ${subject === item.name ? "bg-[var(--primary)] text-[var(--primary-ink)]" : ""}`} data-agent-action="grades-open" onClick={() => { setParams({ semester: grades.data!.semester, subject: item.name }); setOpened(item.id); }}>{item.name}</button>
+        ))}
+      </div>
       <div className="grid grid-cols-3 gap-2">
         <Glass className="p-0"><div className="glass-pad px-2 py-3 text-center"><p className="text-xs text-[var(--muted)]">Дисциплин</p><p className="text-2xl font-bold">{grades.data.items.length}</p></div></Glass>
         <Glass><div className="glass-pad px-2 py-3 text-center"><p className="text-xs text-[var(--muted)]">Риск</p><p className="text-2xl font-bold">{high}</p></div></Glass>

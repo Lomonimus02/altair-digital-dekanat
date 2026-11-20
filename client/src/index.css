@@ -16,7 +16,7 @@
 @tailwind utilities;
 
 :root {
-  --mobile-chrome: calc(7.75rem + env(safe-area-inset-bottom));
+  --mobile-chrome: calc(9rem + env(safe-area-inset-bottom));
   --bg: #e6fff5;
   --ink: #10241c;
   --muted: #3c5248;
@@ -314,7 +314,10 @@ input.dock {
   font-weight: 650;
   pointer-events: none;
 }
-.btn:active { transform: scale(0.97); }
+.btn:active, .tap:active, a.liquid-glass:active { transform: scale(0.96); }
+@media (prefers-reduced-motion: reduce) {
+  .btn:active, .tap:active, a.liquid-glass:active { transform: none; }
+}
 .grade-chip {
   display: inline-flex;
   align-items: center;

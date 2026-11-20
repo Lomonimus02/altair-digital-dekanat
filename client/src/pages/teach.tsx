@@ -220,11 +220,11 @@ function StudentReview({
       {student.submission.status === "graded" ? <p className="mt-2 text-sm">Оценка {student.submission.score}</p> : student.submission.status === "not_started" ? <p className="mt-2 text-sm text-[var(--muted)]">Не начато — ставить оценку рано.</p> : student.submission.status === "returned" ? null : (
         <div className="mt-3 flex flex-wrap gap-2">
           {[2, 3, 4, 5].map((score) => (
-            <Button key={score} className="h-11 w-11 px-0" onClick={() => void run("teacher_grade_homework", { assignmentId, studentName: student.name, score }).then(onSaved).catch((err: Error) => onError(err.message))}>{score}</Button>
+            <Button key={score} className="h-11 w-11 px-0" data-agent-action="teach-grade" onClick={() => void run("teacher_grade_homework", { assignmentId, studentName: student.name, score }).then(onSaved).catch((err: Error) => onError(err.message))}>{score}</Button>
           ))}
           <Button variant="glass" className="h-11 px-3" onClick={() => void run("teacher_grade_homework", { assignmentId, studentName: student.name, score: 1 }).then(onSaved).catch((err: Error) => onError(err.message))}>зачёт</Button>
           <Button variant="glass" className="h-11 px-3" onClick={() => void run("teacher_grade_homework", { assignmentId, studentName: student.name, score: 0 }).then(onSaved).catch((err: Error) => onError(err.message))}>незачёт</Button>
-          <Button variant="glass" className="h-11 px-4" onClick={() => void run("teacher_return_homework", { assignmentId, studentName: student.name, comment }).then(onSaved).catch((err: Error) => onError(err.message))}>Вернуть</Button>
+          <Button variant="glass" className="h-11 px-4" data-agent-action="teach-return" onClick={() => void run("teacher_return_homework", { assignmentId, studentName: student.name, comment }).then(onSaved).catch((err: Error) => onError(err.message))}>Вернуть</Button>
         </div>
       )}
     </Glass>
