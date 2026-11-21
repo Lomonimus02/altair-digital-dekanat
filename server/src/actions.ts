@@ -1390,6 +1390,7 @@ async function undoAudit(user: PublicUser, auditId: number): Promise<Outcome> {
           awardedOn: prev.awardedOn,
           teacherId: prev.teacherId,
           columnId: prev.columnId,
+          ...(prev.updatedAt ? { updatedAt: prev.updatedAt } : {}),
         }).where(eq(marks.id, undo.markId));
       } else if (undo.markCreated === false) {
         await getDb().update(marks).set({ points: undo.previousPoints == null ? null : String(undo.previousPoints) }).where(eq(marks.id, undo.markId));
@@ -1407,7 +1408,12 @@ async function undoAudit(user: PublicUser, auditId: number): Promise<Outcome> {
     if (undo.submissionId) {
       await getDb()
         .update(submissions)
-        .set({ status: undo.previousStatus, score: undo.previousScore == null ? null : String(undo.previousScore), teacherComment: undo.previousComment })
+        .set({
+          status: undo.previousStatus,
+          score: undo.previousScore == null ? null : String(undo.previousScore),
+          teacherComment: undo.previousComment,
+          ...(undo.previousUpdatedAt ? { updatedAt: undo.previousUpdatedAt } : {}),
+        })
         .where(eq(submissions.id, undo.submissionId));
     }
     if (undo.assignmentId != null && undo.previousColumnId !== undefined) {

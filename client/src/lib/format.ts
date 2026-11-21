@@ -1,3 +1,5 @@
+import { CHIP_LABELS } from "@shared/journal";
+
 const MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 const DAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 
@@ -85,28 +87,8 @@ export function glueLast(value: string) {
   return `${text.slice(0, index)}\u00A0${text.slice(index + 1)}`;
 }
 
-const KIND_CHIP: Record<string, string> = {
-  lecture: "Лекция",
-  practice: "Практика",
-  lab: "Лаб",
-  seminar: "Сем",
-  exam: "Экз",
-  credit: "Зач",
-  control: "КР",
-  homework: "ДЗ",
-  test: "Тест",
-  essay: "Эссе",
-  project: "Проект",
-  colloquium: "Колл",
-  case: "Кейс",
-  defense: "Защ",
-  reading: "Чтение",
-  problem_set: "Задача",
-  current: "Тек",
-};
-
 export function kindChip(kind: string) {
-  return KIND_CHIP[kind] ?? "Работа";
+  return CHIP_LABELS[kind] ?? "Работа";
 }
 
 export function noticeView(note: { title: string; body: string; kind?: string }) {

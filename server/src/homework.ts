@@ -335,7 +335,7 @@ export async function gradeSubmission(user: PublicUser, assignmentId: number, st
   const now = new Date().toISOString();
   const today = moscowToday();
   const previous = submission
-    ? { id: submission.id, status: submission.status, score: submission.score == null ? null : Number(submission.score), comment: submission.teacherComment }
+    ? { id: submission.id, status: submission.status, score: submission.score == null ? null : Number(submission.score), comment: submission.teacherComment, updatedAt: submission.updatedAt }
     : null;
   const href = `/homework/${assignmentId}`;
   const noticeTitle = `Баллы: ${detail.title}`;
@@ -399,6 +399,7 @@ export async function gradeSubmission(user: PublicUser, assignmentId: number, st
           awardedOn: existingMark.awardedOn,
           teacherId: existingMark.teacherId,
           columnId: existingMark.columnId,
+          updatedAt: existingMark.updatedAt,
         }
       : null;
     if (existingMark) {
@@ -457,6 +458,7 @@ export async function gradeSubmission(user: PublicUser, assignmentId: number, st
       previousStatus: previous?.status ?? "not_started",
       previousScore: previous?.score ?? null,
       previousComment: previous?.comment ?? null,
+      previousUpdatedAt: previous?.updatedAt ?? null,
       markId: saved.markId,
       markCreated: saved.markCreated,
       previousPoints: saved.previousPoints,

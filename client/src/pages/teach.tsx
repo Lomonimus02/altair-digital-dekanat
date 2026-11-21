@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAction } from "../lib/action";
-import { formatScore } from "@shared/journal";
+import { formatScore, validPoints } from "@shared/journal";
 import { EmptyLine, LessonItem, SectionHeader, WorkItem } from "../components/items";
 import { BackLink, Button, Choice, EmptyState, ErrorState, Glass, LoadingBlock, Pill } from "../components/ui";
 
@@ -106,7 +106,7 @@ export function TeachAssignment() {
   const { id = "" } = useParams();
   const detail = useQuery({
     queryKey: ["teach-assignment", id],
-    queryFn: () => api<{ assignment: { id: number; title: string; description: string; groupName: string; discipline: string; maxPoints?: number; students: { name: string; submission: { statusLabel: string; body: string; status: string; score: number | null; teacherComment: string | null } }[] } }>(`/api/teach/homework/${id}`),
+    queryFn: () => api<{ assignment: { id: number; title: string; description: string; groupName: string; discipline: string; kind: string; maxPoints?: number; students: { name: string; submission: { statusLabel: string; body: string; status: string; score: number | null; teacherComment: string | null } }[] } }>(`/api/teach/homework/${id}`),
   });
   const [error, setError] = useState("");
   if (detail.isLoading) return <LoadingBlock />;
@@ -119,13 +119,13 @@ export function TeachAssignment() {
       <p className="t-meta">{assignment.groupName}</p>
       <p className="t-meta">{assignment.discipline}</p>
       <Glass><p className="text-sm" data-ui-allow-latin="">{assignment.description}</p></Glass>
-      <ReviewGroups students={assignment.students} assignmentId={assignment.id} maxPoints={assignment.maxPoints ?? 10} onError={setError} onSaved={() => void detail.refetch()} />
+      <ReviewGroups students={assignment.students} assignmentId={assignment.id} kind={assignment.kind} maxPoints={assignment.maxPoints ?? 10} onError={setError} onSaved={() => void detail.refetch()} />
       {error ? <p className="text-sm text-[var(--risk-high-fg)]">{error}</p> : null}
     </div>
   );
 }
 
-function ReviewGroups({ students, assignmentId, maxPoints, onError, onSaved }: { students: { name: string; submission: { statusLabel: string; body: string; status: string; score: number | null; teacherComment: string | null } }[]; assignmentId: number; maxPoints: number; onError: (message: string) => void; onSaved: () => void }) {
+function ReviewGroups({ students, assignmentId, kind, maxPoints, onError, onSaved }: { students: { name: string; submission: { statusLabel: string; body: string; status: string; score: number | null; teacherComment: string | null } }[]; assignmentId: number; kind: string; maxPoints: number; onError: (message: string) => void; onSaved: () => void }) {
   const waiting = students.filter((student) => student.submission.status === "in_review" || student.submission.status === "submitted");
   const returned = students.filter((student) => student.submission.status === "returned");
   const graded = students.filter((student) => student.submission.status === "graded");
@@ -133,11 +133,11 @@ function ReviewGroups({ students, assignmentId, maxPoints, onError, onSaved }: {
   return (
     <>
       <SectionHeader title="На проверке" count={waiting.length} />
-      {waiting.map((student) => <StudentReview key={student.name} student={student} assignmentId={assignmentId} maxPoints={maxPoints} onError={onError} onSaved={onSaved} />)}
+      {waiting.map((student) => <StudentReview key={student.name} student={student} assignmentId={assignmentId} kind={kind} maxPoints={maxPoints} onError={onError} onSaved={onSaved} />)}
       {returned.length ? <SectionHeader title="Возвращены" count={returned.length} /> : null}
-      {returned.map((student) => <StudentReview key={student.name} student={student} assignmentId={assignmentId} maxPoints={maxPoints} onError={onError} onSaved={onSaved} />)}
+      {returned.map((student) => <StudentReview key={student.name} student={student} assignmentId={assignmentId} kind={kind} maxPoints={maxPoints} onError={onError} onSaved={onSaved} />)}
       {graded.length ? <SectionHeader title="Сдано" count={graded.length} /> : null}
-      {graded.map((student) => <StudentReview key={student.name} student={student} assignmentId={assignmentId} maxPoints={maxPoints} onError={onError} onSaved={onSaved} />)}
+      {graded.map((student) => <StudentReview key={student.name} student={student} assignmentId={assignmentId} kind={kind} maxPoints={maxPoints} onError={onError} onSaved={onSaved} />)}
       {idle.length ? (
         <section className="space-y-1">
           <SectionHeader title="Не сдали" count={idle.length} />
@@ -151,40 +151,60 @@ function ReviewGroups({ students, assignmentId, maxPoints, onError, onSaved }: {
 function StudentReview({
   student,
   assignmentId,
+  kind,
   maxPoints,
   onError,
   onSaved,
 }: {
   student: { name: string; submission: { statusLabel: string; body: string; status: string; score: number | null; teacherComment: string | null } };
   assignmentId: number;
+  kind: string;
   maxPoints: number;
   onError: (message: string) => void;
   onSaved: () => void;
 }) {
   const run = useAction();
-  const [draft, setDraft] = useState(formatScore(student.submission.score ?? 0));
+  const [draft, setDraft] = useState(student.submission.score == null ? "" : formatScore(student.submission.score));
   const [comment, setComment] = useState(student.submission.teacherComment || "Нужно поправить и прислать снова.");
+  useEffect(() => {
+    setDraft(student.submission.score == null ? "" : formatScore(student.submission.score));
+  }, [student.submission.score]);
   useEffect(() => {
     if (student.submission.teacherComment) setComment(student.submission.teacherComment);
   }, [student.submission.teacherComment]);
   const grading = student.submission.status === "in_review" || student.submission.status === "submitted";
-  const parsed = Number(draft.replace(",", "."));
+  const raw = draft.trim().replace(",", ".");
+  const parsed = Number(raw);
+  const valid = raw !== "" && Number.isFinite(parsed) && validPoints(parsed, maxPoints);
   const step = (delta: number) => {
-    const next = Math.round(((Number.isFinite(parsed) ? parsed : 0) + delta) * 2) / 2;
+    const base = raw === "" || !Number.isFinite(parsed) ? 0 : parsed;
+    const next = Math.round((base + delta) * 2) / 2;
     setDraft(formatScore(Math.min(maxPoints, Math.max(0, next))));
   };
+  const picks = [
+    { label: "макс", value: maxPoints },
+    { label: "75%", value: Math.round(maxPoints * 0.75 * 2) / 2 },
+    { label: "50%", value: Math.round(maxPoints * 0.5 * 2) / 2 },
+  ];
   return (
     <Glass target={`student-${student.name}`}>
-      <WorkItem title={shortName(student.name)} kind="homework" status={student.submission.status} points={student.submission.score != null ? { value: student.submission.score, max: maxPoints } : undefined} />
+      <WorkItem title={shortName(student.name)} kind={kind} status={student.submission.status} points={student.submission.score != null ? { value: student.submission.score, max: maxPoints } : undefined} />
       {student.submission.body ? <p className="mt-2 text-sm" data-ui-allow-latin="">{student.submission.body}</p> : null}
       {grading ? (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button type="button" className="btn btn-quiet h-11 w-11 px-0" aria-label="Меньше" onClick={() => step(-0.5)}>−</button>
-          <input className="field h-11 w-20 text-center" inputMode="decimal" aria-label="Баллы" value={draft} onChange={(event) => setDraft(event.target.value)} />
-          <span className="t-meta whitespace-nowrap">из {maxPoints}</span>
-          <button type="button" className="btn btn-quiet h-11 w-11 px-0" aria-label="Больше" onClick={() => step(0.5)}>+</button>
-          <Button className="h-11 px-3" data-agent-action="teach-grade" onClick={() => void run("teacher_grade_homework", { assignmentId, studentName: student.name, score: Number(draft.replace(",", ".")) }).then(onSaved).catch((err: Error) => onError(err.message))}>Сохранить баллы</Button>
-          <Button variant="glass" className="h-11 px-4" data-agent-action="teach-return" onClick={() => void run("teacher_return_homework", { assignmentId, studentName: student.name, comment }).then(onSaved).catch((err: Error) => onError(err.message))}>Вернуть</Button>
+        <div className="mt-3 space-y-2">
+          <div className="flex flex-nowrap items-center gap-2">
+            <button type="button" className="btn btn-quiet h-11 w-11 shrink-0 px-0" aria-label="Меньше" onClick={() => step(-0.5)}>−</button>
+            <input className="field h-11 shrink-0 px-2 text-center" style={{ width: 72, flex: "0 0 72px" }} inputMode="decimal" aria-label="Баллы" placeholder="—" value={draft} onChange={(event) => setDraft(event.target.value)} />
+            <span className="t-meta whitespace-nowrap">из {maxPoints}</span>
+            <button type="button" className="btn btn-quiet h-11 w-11 shrink-0 px-0" aria-label="Больше" onClick={() => step(0.5)}>+</button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {picks.map((pick) => (
+              <button key={pick.label} type="button" className="btn btn-quiet h-11 px-3" onClick={() => setDraft(formatScore(pick.value))}>{pick.label}</button>
+            ))}
+          </div>
+          <Button className="h-11 w-full" data-agent-action="teach-grade" disabled={!valid} onClick={() => { if (!valid) return; void run("teacher_grade_homework", { assignmentId, studentName: student.name, score: parsed }).then(onSaved).catch((err: Error) => onError(err.message)); }}>Сохранить баллы</Button>
+          <Button variant="glass" className="h-11 w-full" data-agent-action="teach-return" onClick={() => void run("teacher_return_homework", { assignmentId, studentName: student.name, comment }).then(onSaved).catch((err: Error) => onError(err.message))}>Вернуть</Button>
         </div>
       ) : null}
     </Glass>

@@ -17,6 +17,27 @@ export const WORK_TYPES = {
 } as const;
 
 export const WORK_TYPE_KEYS = ["current", "seminar", "homework", "lab", "test", "essay", "case", "project", "colloquium", "control", "defense", "credit"] as const;
+
+/** Подписи чипов: очередь, задание и список оценок берут одну карту. */
+export const CHIP_LABELS: Record<string, string> = {
+  lecture: "Лекция",
+  practice: "Практика",
+  lab: "Лабораторная",
+  seminar: "Семинар",
+  exam: "Экзамен",
+  credit: "Зачёт",
+  control: "Контрольная",
+  homework: "Задача",
+  problem_set: "Задача",
+  test: "Тест",
+  essay: "Эссе",
+  project: "Проект",
+  colloquium: "Коллоквиум",
+  case: "Кейс",
+  defense: "Защита",
+  reading: "Чтение",
+  current: "Текущая",
+};
 export type WorkType = (typeof WORK_TYPE_KEYS)[number];
 
 export const ATTENDANCE = { present: "", absent: "Н", sick: "Б", late: "О", excused: "У" } as const;
