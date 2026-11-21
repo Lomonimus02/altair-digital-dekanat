@@ -158,7 +158,7 @@ export const schemas = {
     assignmentId: z.number().int().positive().optional(),
     query: z.string().max(80).optional(),
     studentName: z.string().trim().min(2).max(120),
-    score: z.number().int().min(0).max(5),
+    score: z.number().min(0).max(1000).refine((value) => Math.abs(value * 2 - Math.round(value * 2)) < 1e-6, "Шаг 0,5"),
     comment: z.string().trim().max(1000).optional(),
     groupName: z.string().max(40).optional(),
     discipline: z.string().max(160).optional(),

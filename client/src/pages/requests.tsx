@@ -4,6 +4,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
 import { useAction } from "../lib/action";
+import { RequestItem, SectionHeader } from "../components/items";
+import { glueLast } from "../lib/format";
 import { BackLink, Button, Choice, EmptyState, ErrorState, Glass, LoadingBlock, Pill } from "../components/ui";
 
 interface RequestRow {
@@ -34,17 +36,14 @@ export function RequestsPage() {
         <Link className="btn btn-primary max-md:sr-only" to="/requests/new" data-agent-action="request-new">Новая</Link>
       </div>
       {list.data?.requests.length ? (
-        list.data.requests.map((row) => (
-          <Link key={row.id} to={`/requests/${row.id}`} className="liquid-glass block" data-agent-target={`request-${row.id}`}>
-            <div className="glass-pad flex items-center justify-between gap-3 p-4">
-              <div>
-                <h2 className="font-semibold">№{row.id} · {row.title}</h2>
-                <p className="text-sm text-[var(--muted)]">{row.purpose}</p>
-              </div>
-              <Pill tone={tone(row.status)}>{STATUS_LABEL[row.status]}</Pill>
+        <>
+          <SectionHeader title="Заявки" count={list.data.requests.length} />
+          {list.data.requests.map((row) => (
+            <div key={row.id} data-agent-target={`request-${row.id}`}>
+              <RequestItem href={`/requests/${row.id}`} number={row.id} title={row.title} statusLabel={STATUS_LABEL[row.status]} createdAt={row.createdAt} purpose={row.purpose ?? undefined} />
             </div>
-          </Link>
-        ))
+          ))}
+        </>
       ) : (
         <EmptyState title="Заявок нет" text="Можно заказать справку об обучении — бланк будет готов сразу." action={<Link className="btn btn-primary" to="/requests/new" data-agent-action="request-new">Заказать</Link>} />
       )}
@@ -118,7 +117,7 @@ export function RequestPage() {
   });
   if (detail.isLoading || (detail.isFetching && !detail.data)) return (
     <div className="space-y-3" aria-busy="true">
-      <span className="sr-only">Загрузка заявки</span>
+      <div data-ui="notification"><div data-ui-part="title" className="t-title">Загрузка</div></div>
       <div className="skeleton h-11 w-28" />
       <div className="skeleton h-10 w-2/3" />
       <div className="skeleton h-36 w-full" />
@@ -130,13 +129,8 @@ export function RequestPage() {
   return (
     <div className="space-y-4" data-agent-target={`request-${row.id}`}>
       <BackLink to="/requests" />
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="line-clamp-2">{row.title}</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">№{row.id}</p>
-        </div>
-        <Pill tone={tone(row.status)}>{STATUS_LABEL[row.status]}</Pill>
-      </div>
+      <h1 className="t-page item-title" title={row.title}>{row.title}</h1>
+      <RequestItem href={`/requests/${row.id}`} number={row.id} title={row.title} statusLabel={STATUS_LABEL[row.status]} createdAt={row.createdAt} purpose={row.purpose ?? undefined} />
       <Glass>
         <p className="text-sm">{row.purpose}</p>
         {row.body ? <p className="mt-2 text-sm text-[var(--muted)]">{row.body}</p> : null}
@@ -155,7 +149,7 @@ export function RequestPage() {
           {detail.data.events.map((event) => (
             <li key={event.id}>
               <p className="font-semibold">{STATUS_LABEL[event.status]}</p>
-              <p className="text-sm text-[var(--muted)]">{event.comment}</p>
+              <p className="text-sm text-[var(--muted)]">{event.comment ? glueLast(event.comment) : null}</p>
             </li>
           ))}
         </ol>

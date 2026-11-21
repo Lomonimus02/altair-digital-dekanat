@@ -101,11 +101,11 @@ export function analyzeDiscipline(d: DisciplineView, todayISO: string, threshold
       details.push(`Аттестация ${d.sessionDate}${when ? ` (${when})` : ""}.`.replace(d.sessionDate, formatSession(d.sessionDate)));
     }
     if (blocked) {
-      details.push(`Есть работы ниже ${thresholds.satisfactory}%: ${low.map((mark) => mark.label).join(", ")}.`);
+      details.push(`Ниже ${thresholds.satisfactory}%: ${low.map((mark) => mark.label).join(", ")}.`);
     }
     if (remaining === 1 && !blocked && average != null) {
       if (d.controlForm === "exam") {
-        if (average >= thresholds.excellent) details.push(`Для «отлично» (${thresholds.excellent}%) уже хватает — закройте последнюю работу не ниже ${thresholds.good}%.`);
+        if (average >= thresholds.excellent) details.push(`Для «отлично» (${thresholds.excellent}%) уже хватает. Закройте последнюю работу не ниже ${thresholds.good}%.`);
         else details.push(`Для «отлично» нужно дотянуть итог до ${thresholds.excellent}%, для «хорошо» — до ${thresholds.good}%.`);
       } else {
         details.push(`Чтобы закрыть зачёт, держите итог не ниже ${thresholds.satisfactory}%.`);
@@ -113,13 +113,13 @@ export function analyzeDiscipline(d: DisciplineView, todayISO: string, threshold
     } else if (remaining > 1) {
       details.push(`Итог посчитаем после оставшихся работ: ещё ${remaining}.`);
     } else if (remaining === 0 && !automatic && !blocked && d.controlForm === "exam") {
-      details.push(`Порог «отлично» — ${thresholds.excellent}%, «хорошо» — ${thresholds.good}%, «удовлетворительно» — ${thresholds.satisfactory}%.`);
+      details.push(`Пороги: отлично ${thresholds.excellent}%, хорошо ${thresholds.good}%, удовлетворительно ${thresholds.satisfactory}%.`);
       if (average != null && average < thresholds.excellent) {
         details.push(`До «отлично» не хватает ${formatPercent(thresholds.excellent)} (сейчас ${formatPercent(average)}).`);
       }
     }
     if (automatic === "5") details.push("По баллам выходит «отлично».");
-    if (automatic === "4") details.push("По баллам выходит «хорошо». «Отлично» — если итог дорастёт до порога и не будет работ ниже него.");
+    if (automatic === "4") details.push("По баллам выходит «хорошо». «Отлично», если итог дорастёт до порога и не будет работ ниже него.");
     if (automatic === "pass") details.push("Зачёт закрывается накопленными баллами.");
   }
 

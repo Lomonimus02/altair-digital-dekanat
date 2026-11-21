@@ -1,4 +1,3 @@
-import { CONTEST_NOTE } from "@shared/domain";
 import { useId, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ChevronLeft } from "lucide-react";
@@ -28,7 +27,12 @@ export function BackLink({ to }: { to: string }) {
 }
 
 export function ContestNote({ className = "" }: { className?: string }) {
-  return <p className={`text-xs leading-relaxed text-[var(--muted)] ${className}`}>{CONTEST_NOTE}</p>;
+  return (
+    <div className={className}>
+      <p className="text-xs leading-relaxed text-[var(--muted)]">Учебный концепт «Цифровой деканат».</p>
+      <p className="text-xs leading-relaxed text-[var(--muted)]">«Альтаир» вымышлен, это не вуз.</p>
+    </div>
+  );
 }
 
 export function Glass({ className = "", children, target }: { className?: string; children: ReactNode; target?: string }) {
@@ -62,8 +66,7 @@ export function Skeleton({ className = "" }: { className?: string }) {
 export function LoadingBlock() {
   return (
     <div className="space-y-3" aria-busy="true" aria-live="polite">
-      <span className="sr-only">Загрузка</span>
-      <Skeleton className="h-8 w-48" />
+      <div data-ui="notification"><div data-ui-part="title" className="t-title">Загрузка</div></div>
       <Skeleton className="h-36 w-full" />
       <Skeleton className="h-28 w-full" />
     </div>
@@ -73,7 +76,7 @@ export function LoadingBlock() {
 export function EmptyState({ title, text, action }: { title: string; text: string; action?: ReactNode }) {
   return (
     <Glass>
-      <h2 className="text-lg font-display">{title}</h2>
+      <div data-ui="notification"><div data-ui-part="title" className="t-title" title={title}>{title}</div></div>
       <p className="mt-2 text-sm text-[var(--muted)]">{text}</p>
       {action ? <div className="mt-4">{action}</div> : null}
     </Glass>
@@ -83,7 +86,7 @@ export function EmptyState({ title, text, action }: { title: string; text: strin
 export function ErrorState({ text, onRetry }: { text: string; onRetry?: () => void }) {
   return (
     <Glass>
-      <h2 className="text-lg font-display">Не удалось загрузить</h2>
+      <div data-ui="notification"><div data-ui-part="title" className="t-title">Не загрузилось</div></div>
       <p className="mt-2 text-sm text-[var(--muted)]">{text}</p>
       {onRetry ? (
         <Button className="mt-4" onClick={onRetry}>

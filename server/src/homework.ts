@@ -1,12 +1,14 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { addDays, formatRuDate, moscowNow, moscowToday, nearestStudyDay } from "../../shared/src/dates";
 import type { PublicUser } from "../../shared/src/domain";
+import { defaultWorkRule, formatScore, validPoints, type WorkType } from "../../shared/src/journal";
 import { matchDiscipline } from "../../shared/src/parser";
 import { samePerson, toDative } from "../../shared/src/names";
 import { getDb } from "./db/client";
-import { assignments, attendance, disciplines, groupAnnouncements, marks, scheduleItems, submissions, teachingLoad, users } from "./db/schema";
+import { assignments, attendance, disciplines, groupAnnouncements, journalColumns, marks, notifications, scheduleItems, submissions, teachingLoad, users } from "./db/schema";
 import { publish } from "./hub";
-import { forbidden, notFound } from "./httpError";
+import { badRequest, forbidden, notFound } from "./httpError";
+import { ensureDiscipline, readScheme } from "./journal";
 
 export const HOMEWORK_KINDS = ["essay", "problem_set", "lab", "reading", "project"] as const;
 export type HomeworkKind = (typeof HOMEWORK_KINDS)[number];
@@ -70,7 +72,7 @@ function presentSubmission(row: typeof submissions.$inferSelect | undefined) {
     body: row?.body ?? "",
     links: row?.links ?? [],
     teacherComment: row?.teacherComment ?? null,
-    score: row?.score ?? null,
+    score: row?.score == null ? null : Number(row.score),
   };
 }
 
@@ -172,7 +174,7 @@ export async function teacherHome(user: PublicUser) {
   return {
     groups: load,
     lessonDay,
-    review: review.slice(0, 3).map((row) => ({ assignmentId: row.assignmentId, title: row.title, studentName: row.studentName, groupName: row.groupName })),
+    review: review.slice(0, 3).map((row) => ({ assignmentId: row.assignmentId, title: row.title, kind: row.kind, studentName: row.studentName, groupName: row.groupName })),
     lessons: mine.map((lesson) => ({
       id: lesson.id,
       groupName: lesson.groupName,
@@ -226,6 +228,9 @@ export async function getTeacherAssignment(user: PublicUser, id: number) {
   const assignment = rows[0];
   if (!assignment || assignment.teacherId !== user.id) throw notFound("Задание не найдено");
   await assertTeaches(user.id, assignment.groupName, assignment.discipline);
+  const linked = assignment.columnId
+    ? (await getDb().select().from(journalColumns).where(eq(journalColumns.id, assignment.columnId)).limit(1))[0]
+    : (await getDb().select().from(journalColumns).where(and(eq(journalColumns.groupName, assignment.groupName), eq(journalColumns.discipline, assignment.discipline), eq(journalColumns.title, assignment.title))).limit(1))[0];
   const subs = await getDb().select().from(submissions).where(eq(submissions.assignmentId, id));
   const people = await studentsOf(assignment.groupName);
   return {
@@ -238,6 +243,8 @@ export async function getTeacherAssignment(user: PublicUser, id: number) {
     kind: assignment.kind,
     kindLabel: KIND_LABEL[assignment.kind as HomeworkKind] ?? assignment.kind,
     maxScore: assignment.maxScore,
+    maxPoints: linked?.maxPoints ?? Math.max(assignment.maxScore, 10),
+    columnId: linked?.id ?? null,
     students: people.map((student) => ({
       name: student.fullName,
       submission: presentSubmission(subs.find((row) => row.studentId === student.id)),
@@ -302,63 +309,164 @@ export async function returnSubmission(user: PublicUser, assignmentId: number, s
       type: "submission" as const,
       submissionId: submission.id,
       previousStatus: submission.status,
-      previousScore: submission.score,
+      previousScore: submission.score == null ? null : Number(submission.score),
       previousComment: submission.teacherComment,
       markId: null,
     },
   };
 }
 
+const KIND_WORK: Record<string, WorkType> = {
+  lab: "lab",
+  essay: "essay",
+  project: "project",
+  problem_set: "homework",
+  reading: "homework",
+};
+
 export async function gradeSubmission(user: PublicUser, assignmentId: number, studentName: string, score: number, comment?: string) {
   const { detail, student, submission } = await submissionFor(user, assignmentId, studentName);
-  const credit = score <= 1;
-  if (!credit && (score < 2 || score > detail.maxScore)) throw notFound("Оценка вне шкалы");
+  const maxPoints = detail.maxPoints ?? Math.max(detail.maxScore, 10);
+  if (!validPoints(score, maxPoints)) throw badRequest(`Баллы от 0 до ${maxPoints} с шагом 0,5`);
+  const subject = await ensureDiscipline(student.id, detail.discipline, detail.groupName);
+  const scheme = await readScheme(detail.groupName, detail.discipline);
+  const workType = KIND_WORK[detail.kind] ?? "homework";
+  const rule = scheme.defaults[workType] ?? defaultWorkRule(workType);
   const now = new Date().toISOString();
+  const today = moscowToday();
   const previous = submission
-    ? { id: submission.id, status: submission.status, score: submission.score, comment: submission.teacherComment }
+    ? { id: submission.id, status: submission.status, score: submission.score == null ? null : Number(submission.score), comment: submission.teacherComment }
     : null;
-  if (submission) {
-    await getDb().update(submissions).set({ status: "graded", score, teacherComment: comment ?? submission.teacherComment, updatedAt: now }).where(eq(submissions.id, submission.id));
-  } else {
-    await getDb().insert(submissions).values({
-      assignmentId,
-      studentId: student.id,
-      status: "graded",
-      score,
-      teacherComment: comment ?? null,
-      links: [],
-      updatedAt: now,
-    });
-  }
-  const subject = await getDb()
-    .select()
-    .from(disciplines)
-    .where(and(eq(disciplines.studentId, student.id), eq(disciplines.name, detail.discipline)))
-    .limit(1);
-  let markId: number | null = null;
-  if (subject[0] && !credit) {
-    const [mark] = await getDb().insert(marks).values({
-      disciplineId: subject[0].id,
-      studentId: student.id,
-      label: detail.title,
-      value: null,
-      points: String(score),
-      kind: "current",
-      awardedOn: moscowToday(),
-    }).returning({ id: marks.id });
-    markId = mark.id;
-  }
-  await notify(student.id, "homework", `Оценка за «${detail.title}»: ${score}`, comment || "Работа проверена.", `/homework/${assignmentId}`);
-  const shown = credit ? (score >= 1 ? "зачёт" : "незачёт") : String(score);
+  const href = `/homework/${assignmentId}`;
+  const noticeTitle = `Баллы: ${detail.title}`;
+  const noticeBody = `${formatScore(score)} из ${maxPoints}`;
+  const saved = await getDb().transaction(async (tx) => {
+    const [assignmentRow] = await tx.select({ columnId: assignments.columnId }).from(assignments).where(eq(assignments.id, assignmentId)).limit(1);
+    const previousColumnId = assignmentRow?.columnId ?? null;
+    let submissionId = previous?.id ?? 0;
+    if (submission) {
+      await tx.update(submissions).set({ status: "graded", score: String(score), teacherComment: comment ?? submission.teacherComment, updatedAt: now }).where(eq(submissions.id, submission.id));
+    } else {
+      const [createdSubmission] = await tx.insert(submissions).values({
+        assignmentId,
+        studentId: student.id,
+        status: "graded",
+        score: String(score),
+        teacherComment: comment ?? null,
+        links: [],
+        updatedAt: now,
+      }).returning({ id: submissions.id });
+      submissionId = createdSubmission.id;
+    }
+    let column = detail.columnId
+      ? (await tx.select().from(journalColumns).where(eq(journalColumns.id, detail.columnId)).limit(1))[0]
+      : undefined;
+    if (!column) {
+      column = (await tx.select().from(journalColumns).where(and(
+        eq(journalColumns.groupName, detail.groupName),
+        eq(journalColumns.discipline, detail.discipline),
+        eq(journalColumns.title, detail.title),
+      )).limit(1))[0];
+    }
+    let createdColumnId: number | null = null;
+    if (!column) {
+      const [createdColumn] = await tx.insert(journalColumns).values({
+        groupName: detail.groupName,
+        discipline: detail.discipline,
+        lessonDate: today,
+        workType,
+        title: detail.title,
+        maxScore: maxPoints,
+        maxPoints,
+        weight: String(rule.weight),
+        createdBy: user.id,
+      }).returning();
+      column = createdColumn;
+      createdColumnId = createdColumn.id;
+    }
+    await tx.update(assignments).set({ columnId: column.id }).where(eq(assignments.id, assignmentId));
+    const existingMark = (await tx.select().from(marks).where(and(eq(marks.studentId, student.id), eq(marks.columnId, column.id))).limit(1))[0];
+    let markId = existingMark?.id ?? 0;
+    const markCreated = !existingMark;
+    const previousPoints = existingMark?.points == null ? null : Number(existingMark.points);
+    const previousMark = existingMark
+      ? {
+          value: existingMark.value,
+          points: previousPoints,
+          comment: existingMark.comment,
+          label: existingMark.label,
+          kind: existingMark.kind,
+          awardedOn: existingMark.awardedOn,
+          teacherId: existingMark.teacherId,
+          columnId: existingMark.columnId,
+        }
+      : null;
+    if (existingMark) {
+      await tx.update(marks).set({
+        points: String(score),
+        value: null,
+        label: column.title,
+        awardedOn: today,
+        teacherId: user.id,
+        comment: comment ?? existingMark.comment,
+        updatedAt: now,
+      }).where(eq(marks.id, existingMark.id));
+    } else {
+      const [mark] = await tx.insert(marks).values({
+        disciplineId: subject.id,
+        studentId: student.id,
+        label: column.title,
+        value: null,
+        points: String(score),
+        columnId: column.id,
+        kind: "current",
+        awardedOn: today,
+        teacherId: user.id,
+        comment: comment ?? null,
+      }).returning({ id: marks.id });
+      markId = mark.id;
+    }
+    const existingNotice = (await tx.select().from(notifications).where(and(
+      eq(notifications.userId, student.id),
+      eq(notifications.href, href),
+      eq(notifications.kind, "grade"),
+    )).orderBy(desc(notifications.id)).limit(1))[0];
+    let noticeId = existingNotice?.id ?? 0;
+    const noticeCreated = !existingNotice;
+    const previousNotice = existingNotice ? { title: existingNotice.title, body: existingNotice.body, kind: existingNotice.kind } : null;
+    if (existingNotice) {
+      await tx.update(notifications).set({ title: noticeTitle, body: noticeBody, kind: "grade" }).where(eq(notifications.id, existingNotice.id));
+    } else {
+      const [createdNotice] = await tx.insert(notifications).values({
+        userId: student.id,
+        kind: "grade",
+        title: noticeTitle,
+        body: noticeBody,
+        href,
+      }).returning({ id: notifications.id });
+      noticeId = createdNotice.id;
+    }
+    return { submissionId, markId, markCreated, previousPoints, previousMark, noticeId, noticeCreated, previousNotice, createdColumnId, previousColumnId };
+  });
+  publish(student.id, { type: "notifications" });
   return {
-    summary: `${student.fullName}, ${detail.groupName}, ${detail.discipline}: «${detail.title}» — ${shown}.`,
+    summary: `${student.fullName}, ${detail.groupName}, ${detail.discipline}: «${detail.title}» — ${noticeBody}.`,
     undo: {
       type: "submission" as const,
-      submissionId: submission?.id ?? 0,
+      submissionId: saved.submissionId,
       previousStatus: previous?.status ?? "not_started",
       previousScore: previous?.score ?? null,
       previousComment: previous?.comment ?? null,
-      markId,
+      markId: saved.markId,
+      markCreated: saved.markCreated,
+      previousPoints: saved.previousPoints,
+      noticeId: saved.noticeId,
+      noticeCreated: saved.noticeCreated,
+      previousNotice: saved.previousNotice,
+      createdColumnId: saved.createdColumnId,
+      assignmentId,
+      previousColumnId: saved.previousColumnId,
+      previousMark: saved.previousMark,
     },
   };
 }

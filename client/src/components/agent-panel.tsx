@@ -212,7 +212,7 @@ export function AgentPanel({ variant = "dock", chrome = true }: { variant?: "doc
 
 export function ModelControls() {
   const agent = useAgent();
-  if (agent.gpu === false) return <p className="text-sm text-[var(--muted)]">Локальный режим: ответы собираются на сервере из ваших данных и не уходят в облако.</p>;
+  if (agent.gpu === false) return <p className="text-sm text-[var(--muted)]">Локальный режим: ответы собираются на сервере из ваших данных и не уходят в&nbsp;облако.</p>;
   if (agent.modelState === "ready") return <p className="text-sm text-[var(--muted)]">Модель на устройстве: {MODEL_IDS[agent.modelSize].replace("-Instruct-q4f16_1-MLC", "")}</p>;
   if (agent.modelState === "loading") {
     return (

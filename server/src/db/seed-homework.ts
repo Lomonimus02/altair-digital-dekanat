@@ -1,5 +1,5 @@
 import { and, asc, eq } from "drizzle-orm";
-import { academicPeriod, addDays, moscowToday, weekdayIndex } from "../../../shared/src/dates";
+import { academicPeriod, addDays, formatRuDate, moscowToday, weekdayIndex } from "../../../shared/src/dates";
 import { hashPassword } from "../auth/crypto";
 import { getDb, getPool } from "./client";
 import { assignments, attendance, disciplines, marks, notifications, scheduleItems, submissions, teachingLoad, users } from "./schema";
@@ -95,7 +95,7 @@ export async function seedHomework() {
       status: "not_started" as const,
       body: "",
       comment: null as string | null,
-      score: null as number | null,
+      score: null as string | null,
     },
     {
       group: "БИ-3-26-04",
@@ -131,7 +131,7 @@ export async function seedHomework() {
       status: "graded" as const,
       body: "Схема в ссылке.",
       comment: "Связи верные, подписи сущностей аккуратные.",
-      score: 5,
+      score: "5",
     },
     {
       group: "БИ-3-26-04",
@@ -191,7 +191,7 @@ export async function seedHomework() {
       status: "graded" as const,
       body: "Ссылка на макет.",
       comment: "Структура ясная.",
-      score: 4,
+      score: "4",
     },
   ];
 
@@ -225,7 +225,7 @@ export async function seedHomework() {
         })
         .returning();
       assignment = created;
-      await notifyOnce(student.id, `Новое задание: ${item.title}`, `Срок ${item.deadline}.`, `/homework/${assignment.id}`);
+      await notifyOnce(student.id, item.title, `Новое задание, срок ${formatRuDate(item.deadline)}.`, `/homework/${assignment.id}`);
     }
     if (item.status === "not_started") continue;
     const existing = await db

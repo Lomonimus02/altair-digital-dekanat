@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { formatDdMm } from "@shared/dates";
-import { KIND_LABEL, STATUS_LABEL, type LessonView, type RequestStatus } from "@shared/domain";
+import { STATUS_LABEL, type LessonView, type RequestStatus } from "@shared/domain";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAction } from "../lib/action";
 import { useAgent } from "../lib/agent";
 import { useAuth } from "../lib/auth";
-import { ErrorState, Glass, LoadingBlock, Pill } from "../components/ui";
+import { EmptyLine, ItemSkeleton, LessonItem, NotificationItem, RequestItem, SectionHeader, StatusPill, WorkItem } from "../components/items";
+import { fmtDate, noticeView } from "../lib/format";
+import { ErrorState, Glass, LoadingBlock } from "../components/ui";
 
 interface Brief {
   greeting: string;
@@ -28,78 +29,53 @@ export function DashboardPage() {
   const homework = useQuery({ queryKey: ["homework"], queryFn: () => api<{ homework: { id: number; title: string; deadline: string; submission: { status: string } }[] }>("/api/homework"), enabled: student });
 
   if (user?.role === "staff") return <StaffHome />;
-  if (brief.isLoading || schedule.isLoading) return <LoadingBlock />;
+  if (brief.isLoading || schedule.isLoading) return <div className="space-y-3"><ItemSkeleton kind="lesson" /><ItemSkeleton kind="work" /></div>;
   if (brief.error || schedule.error) return <ErrorState text="Сводка не загрузилась" onRetry={() => void brief.refetch()} />;
 
   const today = schedule.data?.days.find((day) => day.date === schedule.data?.today);
   const upcoming = schedule.data?.days.find((day) => day.date > (schedule.data?.today ?? "") && day.items.length);
   const focusDay = today?.items.length ? today : upcoming;
   const lessons = (focusDay?.items ?? []).slice(0, 3);
-  const lessonTitle = today?.items.length ? "Сейчас" : "Ближайшие пары";
-  const dayName = focusDay
-    ? new Date(`${focusDay.date}T12:00:00Z`).toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).replace(/^\p{Lu}/u, (letter) => letter.toLowerCase())
-    : "";
   const dueWork = (homework.data?.homework ?? []).filter((row) => !["graded", "in_review", "submitted"].includes(row.submission.status)).slice(0, 3);
   const risky = (grades.data?.items ?? []).filter((item) => item.risk === "high" || item.risk === "medium").slice(0, 3);
   const openRequests = (requests.data?.requests ?? []).filter((row) => row.status === "ready" || row.status === "submitted" || row.status === "in_progress").slice(0, 3);
   const unread = dedupeNotes((notes.data?.notifications ?? []).filter((note) => !note.readAt)).slice(0, 3);
 
+  const gradeNotes = dedupeNotes(notes.data?.notifications ?? []).filter((note) => noticeView(note).type === "grade").slice(0, 3);
   return (
     <div className="stagger space-y-4">
       <header className="min-w-0">
-        <h1 className="truncate">Панель управления</h1>
-        <p className="mt-1 text-sm text-[var(--muted)]">{user?.addressName}</p>
+        <h1 className="t-page">Добрый день</h1>
+        <p className="t-muted mt-1">{user?.addressName} {schedule.data?.today ? fmtDate(schedule.data.today, "day") : ""}</p>
       </header>
-      <div className="home-grid">
-        <Glass target="today" className="home-main">
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <h2 className="text-xl font-semibold">{lessonTitle}</h2>
-            <Link className="inline-flex min-h-11 min-w-11 items-center px-2" to="/schedule">Все</Link>
+      <Glass target="today">
+        <SectionHeader title={today?.items.length ? "Пары сегодня" : "Следующая пара"} action={<Link className="t-chip inline-flex min-h-11 items-center" to="/schedule">Все</Link>} />
+        {lessons.length ? lessons.map((lesson, index) => <LessonLine key={lesson.id} lesson={lesson} ask={index === 0} />) : <EmptyLine text="Сегодня пар нет" />}
+      </Glass>
+      <Glass>
+        <SectionHeader title="Работы к сдаче" action={<Link className="t-chip inline-flex min-h-11 items-center" to="/homework">Все</Link>} />
+        {dueWork.length ? dueWork.map((row) => <WorkItem key={row.id} href={`/homework/${row.id}`} title={row.title} kind="homework" due={row.deadline} status={row.submission.status} />) : <EmptyLine text="Срочных заданий нет" />}
+      </Glass>
+      <Glass>
+        <SectionHeader title="Новые баллы" count={gradeNotes.length} action={<Link className="t-chip inline-flex min-h-11 items-center" to="/grades">Все</Link>} />
+        {gradeNotes.length ? gradeNotes.map((note) => {
+          const view = noticeView(note);
+          return <NotificationItem key={note.id} type="grade" title={view.title} body={view.body} at={schedule.data?.today ?? "2026-11-21"} unread={!note.readAt} href={note.href ?? "/grades"} />;
+        }) : <EmptyLine text="Новых баллов нет" />}
+      </Glass>
+      <Glass>
+        <SectionHeader title="Заявки" action={<Link className="t-chip inline-flex min-h-11 items-center" to="/requests">Все</Link>} />
+        {openRequests.length ? openRequests.map((row) => <RequestItem key={row.id} href={`/requests/${row.id}`} number={row.id} title={row.title} statusLabel={STATUS_LABEL[row.status]} createdAt={schedule.data?.today ?? "2026-11-21"} />) : <EmptyLine text="Открытых заявок нет" />}
+      </Glass>
+      <Glass>
+        <SectionHeader title="Сессия" action={<Link className="t-chip inline-flex min-h-11 items-center" to="/grades">Все</Link>} />
+        {risky.length ? risky.map((item) => (
+          <div key={item.id} className="mt-2 flex items-center justify-between gap-2">
+            <span className="t-title" title={item.name}>{item.name}</span>
+            <StatusPill tone={item.risk === "high" ? "red" : "amber"}>{item.risk === "high" ? "Риск" : "В работе"}</StatusPill>
           </div>
-          {dayName ? <p className="mb-2 text-sm text-[var(--muted)]">{dayName}</p> : null}
-          {lessons.length ? lessons.map((lesson, index) => <LessonLine key={lesson.id} lesson={lesson} ask={index === 0} />) : <p className="py-4 text-sm text-[var(--muted)]">Ближайших пар нет.</p>}
-        </Glass>
-        <div className="flex flex-col gap-4">
-          <Glass>
-            <div className="mb-1 flex items-center justify-between">
-              <h2 className="text-xl font-semibold">Сроки</h2>
-              <Link className="inline-flex min-h-11 min-w-11 items-center px-2" to="/homework">Все</Link>
-            </div>
-            {dueWork.length ? dueWork.map((row) => (
-              <Link key={row.id} to={`/homework/${row.id}`} className="block min-h-11 border-t border-white/40 py-2 text-sm first:border-0">
-                <span className="font-semibold">{row.title}</span>
-                <span className="text-[var(--muted)]"> · до {formatDdMm(row.deadline)}</span>
-              </Link>
-            )) : <p className="text-sm text-[var(--muted)]">Срочных заданий нет.</p>}
-          </Glass>
-          <Glass>
-            <div className="mb-1 flex items-center justify-between">
-              <h2 className="text-xl font-semibold">Нужно действие</h2>
-              <Link className="inline-flex min-h-11 min-w-11 items-center px-2" to="/requests">Все</Link>
-            </div>
-            {openRequests.map((row) => (
-              <p key={row.id} className="flex items-center justify-between gap-2 border-t border-white/40 py-2 text-sm first:border-0">
-                <span className="min-w-0 font-semibold">{row.title}</span>
-                <Pill tone="mid">{STATUS_LABEL[row.status]}</Pill>
-              </p>
-            ))}
-            {unread.map((note) => <p key={note.id} className="truncate border-t border-white/40 py-2 text-sm">{note.title}</p>)}
-            {!openRequests.length && !unread.length ? <p className="text-sm text-[var(--muted)]">Срочных дел нет.</p> : null}
-          </Glass>
-          <Glass>
-            <div className="mb-1 flex items-center justify-between">
-              <h2 className="text-xl font-semibold">Сессия</h2>
-              <Link className="inline-flex min-h-11 min-w-11 items-center px-2" to="/grades">Все</Link>
-            </div>
-            {risky.length ? risky.map((item) => (
-              <p key={item.id} className="mt-2 text-sm">
-                <span className="font-semibold">{item.name}. </span>
-                <span className="text-[var(--muted)]">{item.statusText || item.headline}</span>
-              </p>
-            )) : <p className="mt-2 text-sm text-[var(--muted)]">Срочного риска нет.</p>}
-          </Glass>
-        </div>
-      </div>
+        )) : <EmptyLine text="Срочного риска нет" />}
+      </Glass>
     </div>
   );
 }
@@ -114,24 +90,23 @@ function StaffHome() {
   const fresh = inbox.data?.requests.filter((row) => row.status === "submitted") ?? [];
   return (
     <div className="space-y-4">
-      <h1>Учебный офис</h1>
+      <h1 className="t-page">Учебный офис</h1>
       <Glass target="inbox">
-        <p className="text-sm text-[var(--muted)]">Новых заявок: {fresh.length}. Агент может разобрать входящие и подсказать ответ.</p>
-        <button className="btn btn-primary mt-3" onClick={() => void agent.send("Разбери входящие")}>Разобрать с агентом</button>
+        <SectionHeader title="Новые" count={fresh.length} action={<button className="btn btn-primary h-11 px-3" onClick={() => void agent.send("Разбери входящие")}>Разобрать с агентом</button>} />
       </Glass>
-      <div className="stagger space-y-3">
-        {[...(inbox.data?.requests ?? [])].filter((row) => !status || row.status === status).sort((a, b) => Number(b.status === "submitted") - Number(a.status === "submitted")).slice(0, 6).map((row) => (
-          <Link key={row.id} to={`/staff/requests/${row.id}`} className="liquid-glass block">
-            <div className="glass-pad p-4">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="min-w-0 font-semibold">{row.title}</h2>
-                <Pill tone={row.status === "rejected" ? "high" : row.status === "submitted" ? "mid" : "low"}>{STATUS_LABEL[row.status]}</Pill>
-              </div>
-              <p className="mt-1 text-sm text-[var(--muted)]">{row.studentName}{row.groupName ? ` · ${row.groupName}` : ""}</p>
-            </div>
-          </Link>
-        ))}
-      </div>
+      {(["submitted", "in_progress", "issued"] as const).map((bucket) => {
+        const title = bucket === "submitted" ? "Новые" : bucket === "in_progress" ? "В работе" : "Закрыто";
+        const rows = (inbox.data?.requests ?? []).filter((row) => (bucket === "issued" ? row.status === "issued" || row.status === "rejected" || row.status === "ready" : row.status === bucket)).filter((row) => !status || row.status === status);
+        if (!rows.length) return null;
+        return (
+          <section key={bucket} className="space-y-2">
+            <SectionHeader title={title} count={rows.length} />
+            {rows.slice(0, 6).map((row) => (
+              <RequestItem key={row.id} href={`/staff/requests/${row.id}`} number={row.id} title={row.title} statusLabel={STATUS_LABEL[row.status]} createdAt={row.createdAt ?? "2026-11-21"} student={row.studentName} group={row.groupName ?? undefined} fresh={row.status === "submitted"} />
+            ))}
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -139,20 +114,25 @@ function StaffHome() {
 function LessonLine({ lesson, ask = false }: { lesson: LessonView; ask?: boolean }) {
   const agent = useAgent();
   const run = useAction();
+  const state = lesson.changeType === "cancelled" ? "cancelled" : lesson.changeType === "moved" || lesson.changeType === "room" ? "moved" : "normal";
   return (
-    <div className="flex gap-3 border-t border-white/40 py-3 first:border-0" data-agent-target={`lesson-${lesson.id}`}>
-      <div className="w-24 shrink-0 text-sm font-semibold">{lesson.startsAt}–{lesson.endsAt}</div>
-      <div className="min-w-0">
-        <p className="line-clamp-2 font-semibold leading-snug">{lesson.discipline}</p>
-        <p className="text-sm text-[var(--muted)]">{KIND_LABEL[lesson.kind]} · ауд. {lesson.room} · {lesson.teacher}</p>
-        {lesson.changeType !== "none" ? <p className="mt-1 text-sm">{lesson.changeNote}</p> : null}
-        {ask ? (
-          <div className="mt-2 flex flex-wrap gap-2">
-            <button type="button" className="btn btn-quiet h-11 px-3" onClick={() => void run("mark_schedule_item", { scheduleItemId: lesson.id, flagged: !lesson.flagged })}>Звезда</button>
-            <button type="button" className="btn btn-quiet h-11 px-3" onClick={() => agent.ask(`Что у меня на паре «${lesson.discipline}»?`)}>Спросить агента</button>
-          </div>
+    <div data-agent-target={`lesson-${lesson.id}`}>
+      <LessonItem
+        start={lesson.startsAt}
+        end={lesson.endsAt}
+        title={lesson.discipline}
+        kind={lesson.kind}
+        room={lesson.room ?? undefined}
+        teacher={lesson.teacher ?? undefined}
+        state={state}
+        note={lesson.changeNote ?? undefined}
+        action={ask ? (
+          <button type="button" className="btn btn-quiet h-11 px-3" data-agent-action="schedule-star" aria-pressed={lesson.flagged} onClick={() => void run("mark_schedule_item", { scheduleItemId: lesson.id, flagged: !lesson.flagged })}>
+            {lesson.flagged ? "Пара отмечена" : "Отметить пару"}
+          </button>
         ) : null}
-      </div>
+      />
+      {ask ? <button type="button" className="btn btn-quiet mt-2 h-11 px-3" onClick={() => agent.ask(`Что у меня на паре «${lesson.discipline}»?`)}>Спросить агента</button> : null}
     </div>
   );
 }
@@ -174,5 +154,6 @@ interface StaffRow {
   status: RequestStatus;
   studentName: string;
   groupName: string | null;
+  createdAt?: string;
   triage: { summary: string };
 }

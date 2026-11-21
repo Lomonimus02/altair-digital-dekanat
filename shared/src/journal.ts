@@ -162,7 +162,7 @@ export function parseWorkType(text: string): { type: WorkType; title?: string } 
 export function journalDate(text: string, today = moscowToday()): string | undefined {
   const t = text.toLowerCase().replace(/ё/g, "е");
   if (/вчера/.test(t)) return addDays(today, -1);
-  const asked = scheduleAsk(text, [], today);
+  const asked = scheduleAsk(text, [], today, "past");
   if (asked?.date) return asked.date;
   if (asked?.when === "today" || asked?.when === "tomorrow" || asked?.when === "day_after") return resolveWhen(asked.when, today).focus;
   return undefined;

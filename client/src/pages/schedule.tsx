@@ -1,13 +1,13 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { CHANGE_LABEL, KIND_LABEL, type LessonView } from "@shared/domain";
+import { type LessonView } from "@shared/domain";
 import { addDays, formatDdMm, formatWeekSpan, scheduleLook } from "@shared/dates";
 import { useAuth } from "../lib/auth";
-import { Star } from "lucide-react";
 import { useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAction } from "../lib/action";
-import { ErrorState, Glass, LoadingBlock, Pill } from "../components/ui";
+import { LessonItem, SectionHeader } from "../components/items";
+import { ErrorState, Glass, LoadingBlock } from "../components/ui";
 
 interface ScheduleResponse {
   today: string;
@@ -138,30 +138,31 @@ function DayCard({ day, today }: { day?: { date: string; weekday: string; items:
 function Lesson({ lesson }: { lesson: LessonView }) {
   const run = useAction();
   const { user } = useAuth();
-  const tone = lesson.changeType === "cancelled" ? "high" : lesson.changeType === "none" ? "low" : "mid";
-  const who = user?.role === "teacher" ? lesson.groupName : lesson.teacher;
+  const state = lesson.changeType === "cancelled" ? "cancelled" : lesson.changeType === "none" ? "normal" : "moved";
   return (
-    <article className={`border-t border-white/40 py-3 first:border-0 ${lesson.changeType === "cancelled" ? "opacity-70" : ""}`} data-agent-target={`lesson-${lesson.id}`}>
-      <div className="flex items-start gap-3">
-        <div className="w-24 shrink-0 text-sm font-semibold leading-tight">{lesson.startsAt}–{lesson.endsAt}</div>
-        <div className="min-w-0 flex-1">
-          <h3 className="line-clamp-2 font-semibold leading-snug">{lesson.discipline}</h3>
-          {lesson.changeType !== "none" ? <div className="mt-1"><Pill tone={tone}>{CHANGE_LABEL[lesson.changeType]}</Pill></div> : null}
-          <p className="text-sm text-[var(--muted)]">{KIND_LABEL[lesson.kind]} · ауд. {lesson.room}{who ? ` · ${who}` : ""}</p>
-          {lesson.changeNote ? <p className="mt-1 text-sm">{lesson.changeNote}</p> : null}
-        </div>
-        {user?.role === "teacher" ? null : (
+    <article data-agent-target={`lesson-${lesson.id}`}>
+      <LessonItem
+        start={lesson.startsAt}
+        end={lesson.endsAt}
+        title={lesson.discipline}
+        kind={lesson.kind}
+        room={lesson.room || undefined}
+        teacher={user?.role === "teacher" ? undefined : lesson.teacher || undefined}
+        group={user?.role === "teacher" ? lesson.groupName || undefined : undefined}
+        state={state}
+        note={lesson.changeNote ?? undefined}
+        action={user?.role === "teacher" ? null : (
           <button
-            className="btn btn-quiet h-11 w-11 shrink-0 px-0"
+            className="btn btn-quiet h-11 px-3"
             data-agent-action="schedule-star"
-            aria-label={lesson.flagged ? "Снять отметку" : "Отметить занятие"}
+            aria-label={lesson.flagged ? "Снять отметку пары" : "Отметить пару"}
             aria-pressed={lesson.flagged}
             onClick={() => void run("mark_schedule_item", { scheduleItemId: lesson.id, flagged: !lesson.flagged })}
           >
-            <Star className="h-4 w-4" fill={lesson.flagged ? "currentColor" : "none"} />
+            {lesson.flagged ? "Отмечена" : "Отметить"}
           </button>
         )}
-      </div>
+      />
     </article>
   );
 }

@@ -3,6 +3,9 @@ import type { DisciplineView } from "@shared/domain";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { formatPercent, formatScore, monthBounds, semesterBounds } from "@shared/journal";
+import { gradeInk, gradeTone } from "../lib/format";
+import { GradeItem, SectionHeader } from "../components/items";
+import { fmtDate } from "../lib/format";
 import { api } from "../lib/api";
 import { Choice, EmptyState, ErrorState, Glass, LoadingBlock, Pill } from "../components/ui";
 
@@ -120,8 +123,10 @@ export function GradesPage() {
             <Glass key={item.id} target={`grade-${item.id}`} className={subject && item.name !== subject ? "opacity-70" : ""}>
               <button type="button" className="flex min-h-11 w-full items-center justify-between gap-2 text-left" aria-expanded={expanded} onClick={() => setOpened(expanded ? null : item.id)}>
                 <div className="min-w-0">
-                  <h2 className="truncate text-base font-semibold">{item.name}</h2>
-                  <p className="text-sm text-[var(--muted)]">{item.average == null ? "Баллов нет" : formatPercent(item.average)} · {item.controlForm === "exam" ? "экзамен" : "зачёт"}</p>
+                  <div data-ui="grade" className="min-w-0">
+                    <h2 data-ui-part="title" className="t-title item-title" title={item.name}>{item.name}</h2>
+                    <p data-ui-part="value" className="t-value">{item.average == null ? "—" : formatPercent(item.average)}</p>
+                  </div>
                 </div>
                 <Pill tone={item.risk === "high" ? "high" : item.risk === "medium" ? "mid" : "low"}>{item.risk === "high" ? "Риск" : item.automatic && !item.finalText ? (item.automatic === "5" ? "Отлично" : item.automatic === "4" ? "Хорошо" : "Зачёт") : item.risk === "medium" ? "В работе" : "Спокойно"}</Pill>
               </button>
@@ -161,7 +166,7 @@ export function GradesPage() {
 function GradeTable({ semester, from, to, subject, focus, mode }: { semester: string; from: string; to: string; subject: string; focus: string; mode: "table" | "list" }) {
   const table = useQuery({
     queryKey: ["grades-table", semester, from, to],
-    queryFn: () => api<{ period: { label: string; final: boolean }; dates: string[]; rows: { discipline: string; weighted: number | null; percent: number | null; earned: number; possible: number; grade: string | null; automatic: string | null; finalText: string | null; cells: { date: string; markId: number; value: number | null; points: number | null; short: string; title: string; comment: string | null; teacher: string | null; weight: number; maxPoints: number }[] }[] }>(`/api/grades/table?semester=${encodeURIComponent(semester)}${from ? `&from=${from}&to=${to}` : ""}`),
+    queryFn: () => api<{ period: { label: string; final: boolean }; dates: string[]; rows: { discipline: string; weighted: number | null; percent: number | null; earned: number; possible: number; grade: string | null; automatic: string | null; finalText: string | null; cells: { date: string; markId: number; value: number | null; points: number | null; short: string; workType?: string; title: string; comment: string | null; teacher: string | null; weight: number; maxPoints: number }[] }[] }>(`/api/grades/table?semester=${encodeURIComponent(semester)}${from ? `&from=${from}&to=${to}` : ""}`),
   });
   const [open, setOpen] = useState<{ id: number; top: number; left: number } | null>(null);
   if (table.isLoading) return <LoadingBlock />;
@@ -170,29 +175,41 @@ function GradeTable({ semester, from, to, subject, focus, mode }: { semester: st
   const rows = table.data.rows.filter((row) => !subject || row.discipline === subject);
   if (mode === "list") {
     const cells = rows.flatMap((row) => row.cells.map((cell) => ({ ...cell, discipline: row.discipline }))).sort((a, b) => b.date.localeCompare(a.date));
-    return <ul className="space-y-2">{cells.map((cell) => <li key={cell.markId} className="rounded-2xl bg-[var(--surface-solid)] px-3 py-2 text-sm">{cell.date.slice(8, 10)}.{cell.date.slice(5, 7)} · {cell.discipline} · {cell.title} · {cell.points == null && cell.value == null ? "—" : `${cell.points ?? cell.value}/${cell.maxPoints ?? 10}`}{cell.comment ? ` · ${cell.comment}` : ""}</li>)}</ul>;
+    const dates = [...new Set(cells.map((cell) => cell.date))];
+    return <div className="space-y-3">{dates.map((date) => (
+      <section key={date}>
+        <SectionHeader title={fmtDate(date, "day")} />
+        {cells.filter((cell) => cell.date === date).map((cell) => (
+          <GradeItem key={cell.markId} points={Number(cell.points ?? cell.value ?? 0)} max={cell.maxPoints ?? 10} kind={cell.workType || "current"} title={cell.title} discipline={cell.discipline} hideDate weight={cell.weight} />
+        ))}
+      </section>
+    ))}</div>;
   }
   return (
     <>
-    {final ? null : <p className="text-sm text-[var(--muted)]">За {table.data.period.label}. Это не итог семестра.</p>}
+    {final ? null : <p className="text-sm">За {table.data.period.label}. Это не итог&nbsp;семестра.</p>}
     <div className="max-w-full overflow-x-auto" data-scroll-x>
       <table className="min-w-max border-separate border-spacing-0 text-sm">
         <thead>
           <tr>
             <th className="sticky left-0 z-10 bg-[var(--surface-solid)] px-2 py-2 text-left">Предмет</th>
             {table.data.dates.map((date) => <th key={date} className="min-w-14 whitespace-nowrap px-2 py-2">{date.slice(8, 10)}.{date.slice(5, 7)}</th>)}
-            <th className="sticky right-0 w-16 bg-[var(--surface-solid)] px-1 text-center">%</th>
+            <th className="sticky right-0 z-10 w-16 bg-[var(--surface-solid)] px-1 text-center">Итог</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.discipline}>
-              <th className="sticky left-0 z-10 w-28 bg-[var(--surface-solid)] px-2 py-2 text-left md:w-36" scope="row">{row.discipline}{row.percent != null ? <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-black/10"><span className="block h-full" style={{ width: `${Math.min(100, row.percent)}%`, background: "var(--brand)" }} /></span> : null}<span className="block text-[10px] font-normal text-[var(--muted)]" title="Взвешенные баллы: доля совпадает с процентом">{row.percent == null ? "—" : `${formatPercent(row.percent)} · ${formatScore(row.earned)} из ${row.possible}${final && row.grade ? ` · ${row.grade}` : ""}`}</span></th>
+              <th className="sticky left-0 z-10 w-28 bg-[var(--surface-solid)] px-2 py-2 text-left md:w-36" scope="row" data-ui="grade"><span className="block font-semibold" title={row.discipline}>{row.discipline}</span></th>
               {table.data!.dates.map((date) => {
                 const cells = row.cells.filter((cell) => cell.date === date);
-                return <td key={date} className="px-1">{cells.map((cell) => <button key={cell.markId} type="button" data-agent-target={`grade-${cell.markId}`} className={`m-0.5 rounded-full px-2 py-1 text-xs font-semibold ${cell.markId === Number(focus) ? "ring-2 ring-[var(--primary)]" : ""} ${markTone(cell.points == null ? null : (Number(cell.points) / (cell.maxPoints || 10)) * 100)}`} onClick={(event) => setOpen({ id: cell.markId, top: event.currentTarget.getBoundingClientRect().bottom + 8, left: event.currentTarget.getBoundingClientRect().left })}>{cell.points == null ? "—" : `${cell.points}/${cell.maxPoints ?? 10}`}</button>)}</td>;
+                return <td key={date} className="px-1">{cells.map((cell) => {
+                  const ratio = cell.points == null ? null : (Number(cell.points) / (cell.maxPoints || 10)) * 100;
+                  const label = cell.points == null ? "—" : `${formatScore(Number(cell.points))}/${cell.maxPoints ?? 10}`;
+                  return <button key={cell.markId} type="button" data-agent-target={`grade-${cell.markId}`} className={`m-0.5 whitespace-nowrap rounded-full px-2 py-1 text-xs font-semibold ${cell.markId === Number(focus) ? "ring-2 ring-[var(--primary)]" : ""}`} style={{ background: gradeTone(ratio), color: gradeInk(ratio) }} onClick={(event) => setOpen({ id: cell.markId, top: event.currentTarget.getBoundingClientRect().bottom + 8, left: event.currentTarget.getBoundingClientRect().left })}>{label}</button>;
+                })}</td>;
               })}
-              <td className="sticky right-0 w-16 bg-[var(--surface-solid)] px-1 text-center text-xs"><span className="block whitespace-nowrap">{formatPercent(row.percent)}</span><span className="block">{final ? (row.grade || outcomeLabel(row.automatic, row.finalText)) : "—"}</span></td>
+              <td className="sticky right-0 z-10 w-16 bg-[var(--surface-solid)] px-1 text-center text-xs"><span className="block whitespace-nowrap font-semibold">{formatPercent(row.percent)}</span><span className="block whitespace-nowrap">{final ? (row.grade || outcomeLabel(row.automatic, row.finalText)) : "период"}</span></td>
             </tr>
           ))}
         </tbody>
@@ -201,14 +218,6 @@ function GradeTable({ semester, from, to, subject, focus, mode }: { semester: st
     {open ? <GradePopover cell={rows.flatMap((row) => row.cells.map((item) => ({ ...item, discipline: row.discipline }))).find((item) => item.markId === open.id)} top={open.top} left={open.left} onClose={() => setOpen(null)} /> : null}
     </>
   );
-}
-
-function markTone(percent: number | null) {
-  if (percent == null) return "bg-slate-200 text-slate-900";
-  if (percent >= 85) return "bg-emerald-200 text-emerald-950";
-  if (percent >= 70) return "bg-sky-200 text-sky-950";
-  if (percent >= 55) return "bg-amber-200 text-amber-950";
-  return "bg-rose-200 text-rose-950";
 }
 
 function outcomeLabel(automatic: string | null, finalText: string | null) {
@@ -230,9 +239,12 @@ function GradePopover({ cell, top, left, onClose }: { cell?: { date: string; tit
   const wide = typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches;
   return (
     <div role="dialog" aria-label="Оценка" className="fixed z-[70] w-[min(22rem,calc(100%-1.5rem))] rounded-3xl bg-[var(--surface-solid)] p-4 text-sm shadow-2xl" style={wide ? { top: Math.min(top, window.innerHeight - 220), left: Math.max(12, Math.min(left, window.innerWidth - 360)) } : { left: 12, right: 12, bottom: "calc(7.75rem + env(safe-area-inset-bottom))", width: "auto" }}>
-      <p className="font-semibold">{cell.date.slice(8, 10)}.{cell.date.slice(5, 7)} · {cell.discipline}</p>
-      <p className="mt-1">{cell.short} · {cell.title} · {cell.points ?? cell.value}/{cell.maxPoints ?? 10} · вес {cell.weight}</p>
-      <p className="mt-1 text-[var(--muted)]">{cell.teacher || "—"}{cell.comment ? ` · ${cell.comment}` : ""}</p>
+      <p className="font-semibold">{cell.date.slice(8, 10)}.{cell.date.slice(5, 7)}</p>
+      <p className="mt-1">{cell.discipline}</p>
+      <p className="mt-1">{cell.title}</p>
+      <p className="mt-1 whitespace-nowrap">{cell.points ?? cell.value}/{cell.maxPoints ?? 10}, вес {String(cell.weight).replace(".", ",")}</p>
+      <p className="mt-1 text-[var(--muted)]">{cell.teacher || "—"}</p>
+      {cell.comment ? <p className="mt-1">{cell.comment}</p> : null}
       <button type="button" className="btn btn-quiet mt-3 h-11 px-3" onClick={onClose}>Закрыть</button>
     </div>
   );

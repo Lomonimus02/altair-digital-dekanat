@@ -149,7 +149,7 @@ export function parseIntent(message: string, role: Role, disciplines: string[] =
   }
 
   if (/что если|если\s+(?:я\s+)?(?:получу|поставлю|поставят|будет|сдам)/.test(t)) {
-    const outOf = t.match(/(\d+(?:[.,]\d+)?)\s*из\s*(\d+)/);
+    const outOf = t.match(/(\d+(?:[.,]\d+)?)\s*(?:балл[а-яё]*\s*)?из\s*(\d+)/);
     const scored = outOf ?? t.match(/(\d+(?:[.,]\d+)?)\s*балл/) ?? t.match(/(\d+(?:[.,]\d+)?)/);
     const points = Number(String(scored?.[1] ?? "").replace(",", "."));
     const subject = matchDiscipline(t, disciplines);
@@ -424,10 +424,16 @@ function journalCommand(raw: string, t: string): Proposal | null {
     const name = t.match(/(сорокин\w*|волков\w*|громов\w*|белов\w*)/)?.[1] ?? "студент";
     return step("Готовлю оценку за сданную работу.", "teacher_grade_homework", { studentName: name, query: quoted, score });
   }
-  const pointsMatch = raw.match(/(\d+(?:[.,]\d+)?)\s*балл/iu) ?? (t.match(/поставь\s+(\d+(?:[.,]\d+)?)(?!\d)/) && Number((t.match(/поставь\s+(\d+(?:[.,]\d+)?)(?!\d)/) ?? [])[1]) > 5 ? t.match(/поставь\s+(\d+(?:[.,]\d+)?)(?!\d)/) : null);
-  const outOf = raw.match(/из\s+(\d+)/iu);
-  if (pointsMatch && Number(pointsMatch[1].replace(",", ".")) > 5) {
-    const points = Number(pointsMatch[1].replace(",", "."));
+  const ru = (token: string) => Number(token.replace(",", "."));
+  const outOfFull = raw.match(/(\d+(?:[.,]\d+)?)\s*(?:балл[а-яё]*\s*)?из\s*(\d+)/iu);
+  const ball = raw.match(/(\d+(?:[.,]\d+)?)\s*балл/iu);
+  const spoken = t.match(/поставь\s+(\d+(?:[.,]\d+)?)(?!\d)/);
+  const spokenPoints = spoken ? ru(spoken[1]) : null;
+  const pointsToken = outOfFull?.[1] ?? ball?.[1] ?? (spoken && spokenPoints != null && (spokenPoints > 5 || spokenPoints === 0) ? spoken[1] : undefined);
+  const pointsValue = pointsToken == null ? null : ru(pointsToken);
+  const explicitMax = outOfFull ? Number(outOfFull[2]) : null;
+  if (pointsValue != null && Number.isFinite(pointsValue) && (pointsValue > 5 || pointsValue === 0 || explicitMax != null)) {
+    const points = pointsValue;
     const name = raw.match(/(?:сорокин|волков|громов|белов)[а-яё]*/iu)?.[0]
       ?? raw.match(/поставь\s+\d+(?:[.,]\d+)?(?:\s+из\s+\d+)?(?:\s+балл\w*)?\s+([А-ЯЁа-яё]{3,})/iu)?.[1];
     const workPoints = parseWorkType(raw);
@@ -436,7 +442,7 @@ function journalCommand(raw: string, t: string): Proposal | null {
       return step("Готовлю баллы в журнал.", "teacher_set_mark", {
         studentName: name,
         points,
-        ...(outOf ? { maxPoints: Number(outOf[1]) } : {}),
+        ...(explicitMax != null ? { maxPoints: explicitMax } : {}),
         ...(workPoints ? { workType: workPoints.type, title: workPoints.title ?? WORK_TYPES[workPoints.type].label } : {}),
         ...(datePoints ? { date: datePoints } : {}),
         ...(disciplineHint(t) ? { discipline: disciplineHint(t) } : {}),
@@ -457,6 +463,7 @@ function journalCommand(raw: string, t: string): Proposal | null {
     ?? raw.match(/([А-ЯЁа-яё]{4,})\s+[2-5]\s+за/iu)?.[1]
     ?? raw.match(/«[^»]+»\s+([А-ЯЁа-яё]{4,})/iu)?.[1];
   if (!score || !name) return null;
+  const outOf = raw.match(/из\s+(\d+)/iu);
   return step("Готовлю баллы в журнал.", "teacher_set_mark", {
     studentName: name,
     points: Number(score),

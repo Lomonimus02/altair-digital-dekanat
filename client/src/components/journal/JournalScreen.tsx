@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { moscowToday } from "@shared/dates";
-import { WORK_TYPES, formatPercent, formatScore, journalDateLabel, journalDates, monthBounds, parseJournalFocus, semesterBounds, shiftPeriod, validPoints, weekBounds, workRuleError, type WorkType } from "@shared/journal";
+import { WORK_TYPES, formatPercent, journalDateLabel, journalDates, monthBounds, parseJournalFocus, semesterBounds, shiftPeriod, validPoints, weekBounds, workRuleError, type WorkType } from "@shared/journal";
 import { useEffect, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api";
@@ -212,7 +212,7 @@ function Grid({ data, focus, studentFocus, readOnly, onDone }: { data: Payload; 
         <tbody>
           {data.students.map((student) => (
             <tr key={student.id}>
-              <th className="sticky left-0 z-10 bg-[var(--surface-solid)] px-2 py-1 text-left font-semibold" scope="row">{student.short}</th>
+              <th className="sticky left-0 z-10 whitespace-nowrap bg-[var(--surface-solid)] px-2 py-1 text-left font-semibold" scope="row" title={student.name}>{student.short}</th>
               {columns.map((column) => {
                 const found = column.id ? data.cells.find((item) => item.studentId === student.id && item.columnId === column.id) : undefined;
                 const visit = data.attendance.find((item) => item.studentId === student.id && item.date === column.date);
@@ -221,7 +221,7 @@ function Grid({ data, focus, studentFocus, readOnly, onDone }: { data: Payload; 
                 const max = column.maxPoints ?? column.maxScore ?? 10;
                 return <td key={id} className="px-1 py-1"><button type="button" data-agent-action="journal-cell" data-agent-cell={id} className={`grid h-11 min-w-11 place-items-center rounded-xl text-sm font-semibold ${gradeTone(found?.value ?? null, max)} ${column.virtual ? "border border-dashed" : ""}`} aria-label={`${student.short}, ${column.date.slice(8, 10)}.${column.date.slice(5, 7)} ${column.title}: ${found?.value ?? "пусто"}`} onClick={() => setCell(id)}>{found?.value ?? ""}{visit && visit.status !== "present" ? <sup className="text-[10px]">{visit.status === "absent" ? "Н" : visit.status === "sick" ? "Б" : visit.status === "late" ? "О" : "У"}</sup> : null}</button></td>;
               })}
-              <td className="sticky right-0 bg-[var(--surface-solid)] px-2 text-center text-xs font-semibold" title="Итог за семестр, взвешенные баллы">{data.averages[student.id]?.percent == null ? "—" : formatPercent(data.averages[student.id]?.percent ?? null)}{data.averages[student.id]?.percent == null ? null : <span className="block font-normal text-[var(--muted)]" title="Взвешенные баллы: доля совпадает с процентом">{formatScore(data.averages[student.id]?.earned ?? 0)} из {data.averages[student.id]?.possible}</span>}{data.averages[student.id]?.percent == null ? null : <span className="block">{data.averages[student.id]?.grade}</span>}</td>
+              <td className="sticky right-0 bg-[var(--surface-solid)] px-2 text-center" data-ui="grade" title="Итог за семестр"><span data-ui-part="value" className="t-value inline-grid h-11 min-w-11 place-items-center rounded-2xl px-1" style={{ background: "var(--g-4)" }}>{data.averages[student.id]?.percent == null ? "—" : formatPercent(data.averages[student.id]?.percent ?? null)}</span></td>
             </tr>
           ))}
         </tbody>
@@ -239,7 +239,7 @@ function ColumnHead({ column, lesson, today, readOnly, group, discipline, cells,
     <th className={`px-1 py-1 ${today ? "outline outline-2 outline-[var(--primary)]" : ""} ${lesson?.cancelled ? "opacity-50" : ""}`}>
       <button type="button" className="block min-h-11 text-left" data-agent-action="journal-column" onClick={() => { onActivate?.(); setOpen(true); }}>
         <span className="block text-[11px]">{column.date.slice(8, 10)}.{column.date.slice(5, 7)}</span>
-        <span className={`mt-1 inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] ${tone}`}>{column.short} /{column.maxPoints ?? column.maxScore} · ×{column.weight}</span>
+        <span className={`mt-1 inline-flex gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] ${tone}`}><span>{column.short}</span><span>{column.maxPoints ?? column.maxScore}</span><span>вес {column.weight}</span></span>
         <span className="mt-1 block max-w-[7.5rem] truncate text-[10px] font-normal text-[var(--muted)]" title={caption}>{column.title}</span>
       </button>
       {open ? <ColumnDialog column={column} lesson={lesson} group={group} discipline={discipline} cells={cells} readOnly={readOnly} onClose={() => setOpen(false)} onDone={onDone} /> : null}

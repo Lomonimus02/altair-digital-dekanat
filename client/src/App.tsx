@@ -16,7 +16,15 @@ import { JournalScreen } from "./components/journal/JournalScreen";
 
 function RequireAuth() {
   const { user, loading } = useAuth();
-  if (loading) return <div className="p-6"><LoadingBlock /></div>;
+  if (loading) return (
+    <div className="min-h-dvh">
+      <header className="flex items-center justify-between gap-3 px-4 pt-[max(1rem,env(safe-area-inset-top))]">
+        <span className="t-title">Альтаир</span>
+      </header>
+      <main id="content" className="px-4 pt-4"><LoadingBlock /></main>
+      <nav className="mobile-nav-pill fixed inset-x-4 bottom-4 z-50 h-14" aria-label="Нижняя навигация" />
+    </div>
+  );
   if (!user) return <Navigate to="/login" replace />;
   return <Shell />;
 }

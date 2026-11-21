@@ -4,18 +4,26 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAction } from "../lib/action";
+import { formatScore } from "@shared/journal";
+import { EmptyLine, LessonItem, SectionHeader, WorkItem } from "../components/items";
 import { BackLink, Button, Choice, EmptyState, ErrorState, Glass, LoadingBlock, Pill } from "../components/ui";
 
 interface Home {
   groups: { groupName: string; discipline: string }[];
   lessonDay: string;
-  review: { assignmentId: number; title: string; studentName: string; groupName: string }[];
+  review: { assignmentId: number; title: string; kind?: string; studentName: string; groupName: string }[];
   lessons: { id: number; groupName: string; discipline: string; startsAt: string; endsAt: string; room: string | null }[];
   pending: number;
 }
 
 function moscowDate() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow" }).format(new Date());
+}
+
+function shortName(name: string) {
+  const [last, first, middle] = name.split(" ");
+  if (!first) return name;
+  return `${last}\u00A0${first[0]}.\u00A0${middle ? `${middle[0]}.` : ""}`.trim();
 }
 
 export function TeachHome() {
@@ -25,30 +33,21 @@ export function TeachHome() {
   const groups = [...new Set(home.data.groups.map((row) => row.groupName))];
   return (
     <div className="stagger space-y-4" data-agent-target="teach">
-      <h1>Преподаватель</h1>
+      <h1 className="t-page">Преподаватель</h1>
       <Glass>
-        <div className="mb-1 flex items-center justify-between">
-          <h2 className="text-xl font-semibold">На проверке · {home.data.pending}</h2>
-          <Link className="inline-flex min-h-11 items-center px-2" to="/teach/homework">Все</Link>
-        </div>
-        {home.data.review.length ? home.data.review.map((row) => (
-          <Link key={`${row.assignmentId}-${row.studentName}`} to={`/teach/homework/${row.assignmentId}`} className="block min-h-11 whitespace-normal border-t border-white/40 py-2 text-sm">
-            <span className="font-semibold">{row.title}</span>
-            <span className="text-[var(--muted)]"> · {row.studentName}, {row.groupName}</span>
-          </Link>
-        )) : <p className="text-sm text-[var(--muted)]">Очередь пуста.</p>}
-      </Glass>
-      <Glass>
-        <h2 className="text-xl font-semibold">{home.data.lessonDay === moscowDate() ? "Пары сегодня" : "Ближайшие пары"}</h2>
+        <SectionHeader title={home.data.lessonDay === moscowDate() ? "Пары сегодня" : "Ближайшие пары"} />
         {home.data.lessons.length ? home.data.lessons.slice(0, 3).map((lesson) => (
-          <p key={lesson.id} className="mt-2 text-sm">
-            <span className="font-semibold">{lesson.startsAt}–{lesson.endsAt} {lesson.discipline}</span>
-            <span className="text-[var(--muted)]"> · {lesson.groupName}{lesson.room ? ` · ${lesson.room}` : ""}</span>
-          </p>
-        )) : <p className="mt-2 text-sm text-[var(--muted)]">Ближайших пар нет.</p>}
+          <LessonItem key={lesson.id} start={lesson.startsAt} end={lesson.endsAt} title={lesson.discipline} kind="lecture" room={lesson.room ?? undefined} group={lesson.groupName} action={<Link className="t-chip inline-flex min-h-11 items-center" to={`/teach/journal?group=${encodeURIComponent(lesson.groupName)}&discipline=${encodeURIComponent(lesson.discipline)}`}>Журнал</Link>} />
+        )) : <EmptyLine text="Ближайших пар нет" />}
       </Glass>
       <Glass>
-        <h2 className="text-xl font-semibold">Мои группы</h2>
+        <SectionHeader title="Ждут проверки" count={home.data.pending} action={<Link className="t-chip inline-flex min-h-11 items-center" to="/teach/homework">Все</Link>} />
+        {home.data.review.length ? home.data.review.map((row) => (
+          <WorkItem key={`${row.assignmentId}-${row.studentName}`} href={`/teach/homework/${row.assignmentId}`} title={row.title} kind={row.kind || "homework"} student={shortName(row.studentName)} group={row.groupName} status="in_review" />
+        )) : <EmptyLine text="Очередь пуста" />}
+      </Glass>
+      <Glass>
+        <SectionHeader title="Мои группы" />
         <ul className="mt-2 space-y-2">
           {groups.map((group) => (
             <li key={group} className="flex items-center justify-between gap-2 text-sm">
@@ -70,6 +69,7 @@ export function TeachJournal() {
 interface QueueItem {
   assignmentId: number;
   title: string;
+  kind?: string;
   discipline: string;
   groupName: string;
   studentName: string;
@@ -84,18 +84,20 @@ export function TeachQueue() {
   return (
     <div className="stagger space-y-3" data-agent-target="queue">
       <BackLink to="/teach" />
-      <h1>На проверке</h1>
-      {rows.length === 0 ? <EmptyState title="Очередь пуста" text="Сданных работ пока нет." /> : <div className="stagger space-y-3">{rows.slice(0, 12).map((row) => (
-        <Link key={`${row.assignmentId}-${row.studentName}`} to={`/teach/homework/${row.assignmentId}`} className="liquid-glass block">
-          <div className="glass-pad flex items-center justify-between gap-3 p-4">
-            <div className="min-w-0">
-              <p className="truncate font-semibold">{row.title}</p>
-              <p className="truncate text-sm text-[var(--muted)]">{row.studentName} · {row.groupName}</p>
-            </div>
-            <Pill tone={row.submission.status === "in_review" ? "mid" : "low"}>{row.submission.statusLabel}</Pill>
-          </div>
-        </Link>
-      ))}</div>}
+      <h1 className="t-page">Проверка</h1>
+      {rows.length === 0 ? <EmptyState title="Очередь пуста" text="Сданных работ пока нет." /> : (["in_review", "returned", "graded"] as const).map((status) => {
+        const title = status === "in_review" ? "Ждут проверки" : status === "returned" ? "Возвращены" : "Проверены";
+        const group = rows.filter((row) => (status === "in_review" ? row.submission.status === "in_review" || row.submission.status === "submitted" : row.submission.status === status));
+        if (!group.length) return null;
+        return (
+          <section key={status} className="space-y-2">
+            <SectionHeader title={title} count={group.length} />
+            {group.slice(0, 12).map((row) => (
+              <WorkItem key={`${row.assignmentId}-${row.studentName}`} href={`/teach/homework/${row.assignmentId}`} title={row.title} kind={row.kind || "homework"} student={shortName(row.studentName)} group={row.groupName} status={row.submission.status} />
+            ))}
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -104,7 +106,7 @@ export function TeachAssignment() {
   const { id = "" } = useParams();
   const detail = useQuery({
     queryKey: ["teach-assignment", id],
-    queryFn: () => api<{ assignment: { id: number; title: string; description: string; groupName: string; discipline: string; students: { name: string; submission: { statusLabel: string; body: string; status: string; score: number | null; teacherComment: string | null } }[] } }>(`/api/teach/homework/${id}`),
+    queryFn: () => api<{ assignment: { id: number; title: string; description: string; groupName: string; discipline: string; maxPoints?: number; students: { name: string; submission: { statusLabel: string; body: string; status: string; score: number | null; teacherComment: string | null } }[] } }>(`/api/teach/homework/${id}`),
   });
   const [error, setError] = useState("");
   if (detail.isLoading) return <LoadingBlock />;
@@ -113,57 +115,78 @@ export function TeachAssignment() {
   return (
     <div className="space-y-4">
       <BackLink to="/teach/homework" />
-      <h1 className="line-clamp-2">{assignment.title}</h1>
-      <p className="text-sm text-[var(--muted)]">{assignment.groupName} · {assignment.discipline}</p>
-      <Glass><p className="text-sm">{assignment.description}</p></Glass>
-      {assignment.students.map((student) => (
-        <StudentReview key={student.name} student={student} assignmentId={assignment.id} onError={setError} onSaved={() => void detail.refetch()} />
-      ))}
+      <h1 className="t-page item-title" title={assignment.title}>{assignment.title}</h1>
+      <p className="t-meta">{assignment.groupName}</p>
+      <p className="t-meta">{assignment.discipline}</p>
+      <Glass><p className="text-sm" data-ui-allow-latin="">{assignment.description}</p></Glass>
+      <ReviewGroups students={assignment.students} assignmentId={assignment.id} maxPoints={assignment.maxPoints ?? 10} onError={setError} onSaved={() => void detail.refetch()} />
       {error ? <p className="text-sm text-[var(--risk-high-fg)]">{error}</p> : null}
     </div>
+  );
+}
+
+function ReviewGroups({ students, assignmentId, maxPoints, onError, onSaved }: { students: { name: string; submission: { statusLabel: string; body: string; status: string; score: number | null; teacherComment: string | null } }[]; assignmentId: number; maxPoints: number; onError: (message: string) => void; onSaved: () => void }) {
+  const waiting = students.filter((student) => student.submission.status === "in_review" || student.submission.status === "submitted");
+  const returned = students.filter((student) => student.submission.status === "returned");
+  const graded = students.filter((student) => student.submission.status === "graded");
+  const idle = students.filter((student) => student.submission.status === "not_started" || student.submission.status === "in_progress");
+  return (
+    <>
+      <SectionHeader title="На проверке" count={waiting.length} />
+      {waiting.map((student) => <StudentReview key={student.name} student={student} assignmentId={assignmentId} maxPoints={maxPoints} onError={onError} onSaved={onSaved} />)}
+      {returned.length ? <SectionHeader title="Возвращены" count={returned.length} /> : null}
+      {returned.map((student) => <StudentReview key={student.name} student={student} assignmentId={assignmentId} maxPoints={maxPoints} onError={onError} onSaved={onSaved} />)}
+      {graded.length ? <SectionHeader title="Сдано" count={graded.length} /> : null}
+      {graded.map((student) => <StudentReview key={student.name} student={student} assignmentId={assignmentId} maxPoints={maxPoints} onError={onError} onSaved={onSaved} />)}
+      {idle.length ? (
+        <section className="space-y-1">
+          <SectionHeader title="Не сдали" count={idle.length} />
+          {idle.map((student) => <p key={student.name} className="t-meta whitespace-nowrap" title={student.name}>{shortName(student.name)}</p>)}
+        </section>
+      ) : null}
+    </>
   );
 }
 
 function StudentReview({
   student,
   assignmentId,
+  maxPoints,
   onError,
   onSaved,
 }: {
   student: { name: string; submission: { statusLabel: string; body: string; status: string; score: number | null; teacherComment: string | null } };
   assignmentId: number;
+  maxPoints: number;
   onError: (message: string) => void;
   onSaved: () => void;
 }) {
   const run = useAction();
+  const [draft, setDraft] = useState(formatScore(student.submission.score ?? 0));
   const [comment, setComment] = useState(student.submission.teacherComment || "Нужно поправить и прислать снова.");
   useEffect(() => {
     if (student.submission.teacherComment) setComment(student.submission.teacherComment);
   }, [student.submission.teacherComment]);
+  const grading = student.submission.status === "in_review" || student.submission.status === "submitted";
+  const parsed = Number(draft.replace(",", "."));
+  const step = (delta: number) => {
+    const next = Math.round(((Number.isFinite(parsed) ? parsed : 0) + delta) * 2) / 2;
+    setDraft(formatScore(Math.min(maxPoints, Math.max(0, next))));
+  };
   return (
     <Glass target={`student-${student.name}`}>
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-base font-semibold">{student.name}</h2>
-        <Pill>{student.submission.statusLabel}</Pill>
-      </div>
-      {student.submission.body ? <p className="mt-2 text-sm">{student.submission.body}</p> : null}
-      {student.submission.teacherComment ? <p className="mt-2 text-sm"><span className="font-semibold">Комментарий. </span>{student.submission.teacherComment}</p> : null}
-      {student.submission.status === "returned" ? (
-        <form className="mt-3 space-y-2" onSubmit={(event) => { event.preventDefault(); void run("teacher_return_homework", { assignmentId, studentName: student.name, comment }).then(onSaved).catch((err: Error) => onError(err.message)); }}>
-          <label className="block text-sm font-semibold">Исправить комментарий<textarea className="field mt-1 min-h-16 py-3" value={comment} onChange={(event) => setComment(event.target.value)} /></label>
-          <Button variant="glass" className="h-11 px-4">Сохранить комментарий</Button>
-        </form>
-      ) : null}
-      {student.submission.status === "graded" ? <p className="mt-2 text-sm">Оценка {student.submission.score}</p> : student.submission.status === "not_started" ? <p className="mt-2 text-sm text-[var(--muted)]">Не начато — ставить оценку рано.</p> : student.submission.status === "returned" ? null : (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {[2, 3, 4, 5].map((score) => (
-            <Button key={score} className="h-11 w-11 px-0" data-agent-action="teach-grade" onClick={() => void run("teacher_grade_homework", { assignmentId, studentName: student.name, score }).then(onSaved).catch((err: Error) => onError(err.message))}>{score}</Button>
-          ))}
-          <Button variant="glass" className="h-11 px-3" onClick={() => void run("teacher_grade_homework", { assignmentId, studentName: student.name, score: 1 }).then(onSaved).catch((err: Error) => onError(err.message))}>зачёт</Button>
-          <Button variant="glass" className="h-11 px-3" onClick={() => void run("teacher_grade_homework", { assignmentId, studentName: student.name, score: 0 }).then(onSaved).catch((err: Error) => onError(err.message))}>незачёт</Button>
+      <WorkItem title={shortName(student.name)} kind="homework" status={student.submission.status} points={student.submission.score != null ? { value: student.submission.score, max: maxPoints } : undefined} />
+      {student.submission.body ? <p className="mt-2 text-sm" data-ui-allow-latin="">{student.submission.body}</p> : null}
+      {grading ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button type="button" className="btn btn-quiet h-11 w-11 px-0" aria-label="Меньше" onClick={() => step(-0.5)}>−</button>
+          <input className="field h-11 w-20 text-center" inputMode="decimal" aria-label="Баллы" value={draft} onChange={(event) => setDraft(event.target.value)} />
+          <span className="t-meta whitespace-nowrap">из {maxPoints}</span>
+          <button type="button" className="btn btn-quiet h-11 w-11 px-0" aria-label="Больше" onClick={() => step(0.5)}>+</button>
+          <Button className="h-11 px-3" data-agent-action="teach-grade" onClick={() => void run("teacher_grade_homework", { assignmentId, studentName: student.name, score: Number(draft.replace(",", ".")) }).then(onSaved).catch((err: Error) => onError(err.message))}>Сохранить баллы</Button>
           <Button variant="glass" className="h-11 px-4" data-agent-action="teach-return" onClick={() => void run("teacher_return_homework", { assignmentId, studentName: student.name, comment }).then(onSaved).catch((err: Error) => onError(err.message))}>Вернуть</Button>
         </div>
-      )}
+      ) : null}
     </Glass>
   );
 }

@@ -5,6 +5,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAction } from "../lib/action";
 import { useAgent } from "../lib/agent";
+import { SectionHeader, WorkItem } from "../components/items";
 import { BackLink, Button, EmptyState, ErrorState, Glass, LoadingBlock, Pill } from "../components/ui";
 
 interface Work {
@@ -76,21 +77,11 @@ export function HomeworkPage() {
       </div>
       {rows.length === 0 ? <EmptyState title="Пусто" text="В этом фильтре заданий нет." /> : groups.map((name) => (
         <section key={name} className="space-y-2">
-          <h2 className="text-sm font-semibold text-[var(--muted)]">{name}</h2>
+          <SectionHeader title={name} />
           {rows.filter((work) => groupLabel(work, today) === name).map((work) => (
-            <Link key={work.id} to={`/homework/${work.id}`} className="liquid-glass block min-h-11" data-agent-target={`homework-${work.id}`}>
-              <div className="glass-pad flex items-center justify-between gap-3 p-4">
-                <div className="min-w-0">
-                  <p className="truncate font-semibold">{work.title}</p>
-                  <p className="truncate text-sm text-[var(--muted)]">{work.discipline}</p>
-                  {work.reminder ? <p className="truncate text-sm">Напоминание: {work.reminder}</p> : null}
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-1">
-                  <Pill tone={work.submission.status === "returned" ? "high" : work.submission.status === "graded" ? "low" : "mid"}>{work.submission.statusLabel}</Pill>
-                  <Deadline deadline={work.deadline} today={today} settled={settled(work)} />
-                </div>
-              </div>
-            </Link>
+            <div key={work.id} data-agent-target={`homework-${work.id}`}>
+              <WorkItem href={`/homework/${work.id}`} title={work.title} kind={work.kindLabel === "Лабораторная" ? "lab" : "homework"} subject={work.discipline} due={work.deadline} status={work.submission.status} points={work.submission.score != null ? { value: work.submission.score, max: work.maxScore || 10 } : undefined} />
+            </div>
           ))}
         </section>
       ))}
@@ -128,8 +119,8 @@ export function HomeworkDetail() {
       <BackLink to="/homework" />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="line-clamp-2">{work.title}</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">{work.discipline} · {work.teacherName}</p>
+          <h1 className="t-page item-title" title={work.title}>{work.title}</h1>
+          <WorkItem title={work.title} kind="homework" subject={work.discipline} due={work.deadline} status={work.submission.status} />
         </div>
         <Pill tone={work.submission.status === "returned" ? "high" : work.submission.status === "graded" ? "low" : "mid"}>{work.submission.statusLabel}</Pill>
       </div>

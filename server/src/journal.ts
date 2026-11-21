@@ -3,7 +3,7 @@ import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
 import { analyzeSession } from "../../shared/src/navigator";
 import type { PublicUser } from "../../shared/src/domain";
 import { academicPeriod } from "../../shared/src/dates";
-import { ATTENDANCE, DEFAULT_THRESHOLDS, countsAsSemester, defaultWorkRule, gradeLabel, legacyFromMark, monthBounds, periodLabel, pointsTotal, semesterBounds, validPoints, WORK_TYPES, WORK_TYPE_KEYS, type AttendanceStatus, type WorkType } from "../../shared/src/journal";
+import { ATTENDANCE, DEFAULT_THRESHOLDS, countsAsSemester, defaultWorkRule, formatScore, gradeLabel, legacyFromMark, monthBounds, periodLabel, pointsTotal, semesterBounds, validPoints, WORK_TYPES, WORK_TYPE_KEYS, type AttendanceStatus, type WorkType } from "../../shared/src/journal";
 import { moscowToday } from "../../shared/src/dates";
 import { samePerson } from "../../shared/src/names";
 import { getDb } from "./db/client";
@@ -240,6 +240,26 @@ export async function planMark(user: PublicUser, args: Record<string, unknown>) 
       };
     }
   }
+  if (args.forceNew) {
+    column = undefined;
+    const siblings = await getDb().select().from(journalColumns).where(and(
+      eq(journalColumns.groupName, groupName),
+      eq(journalColumns.discipline, discipline),
+      eq(journalColumns.lessonDate, date),
+      eq(journalColumns.workType, workType),
+    ));
+    const base = WORK_TYPES[workType].label;
+    const taken = new Set(siblings.map((row) => row.title));
+    if (!title || title === "Текущая" || title === base || taken.has(title)) {
+      let n = Math.max(2, siblings.length + 1);
+      let next = `${base} ${n}`;
+      while (taken.has(next)) {
+        n += 1;
+        next = `${base} ${n}`;
+      }
+      title = siblings.length ? next : base;
+    }
+  }
   if (column) title = column.title;
   const lesson = await lessonOn(groupName, discipline, date);
   const existing = column
@@ -265,22 +285,23 @@ export async function planMark(user: PublicUser, args: Record<string, unknown>) 
 
 async function notifyGrade(studentId: number, points: number, maxPoints: number, title: string, date: string, discipline: string, markId: number) {
   const { notifications } = await import("./db/schema");
-  const body = `Новые баллы: ${points}/${maxPoints} (${title}, ${date.slice(8, 10)}.${date.slice(5, 7)}) — ${discipline}`;
+  const body = `${formatScore(points)} из ${maxPoints}. ${title}, ${date.slice(8, 10)}.${date.slice(5, 7)}, ${discipline}`;
+  const nextTitle = `Баллы: ${title}`;
   const href = `/grades?view=table&focus=${markId}`;
   const rows = await getDb().select().from(notifications).where(and(eq(notifications.userId, studentId), eq(notifications.href, href)));
   const existing = rows.sort((left, right) => right.id - left.id)[0];
   if (existing) {
-    await getDb().update(notifications).set({ body, title: "Новые баллы" }).where(eq(notifications.id, existing.id));
-    return { id: existing.id, previousBody: existing.body };
+    await getDb().update(notifications).set({ body, title: nextTitle, kind: "grade" }).where(eq(notifications.id, existing.id));
+    return { id: existing.id, previousBody: existing.body, previousTitle: existing.title };
   }
   const [created] = await getDb().insert(notifications).values({
     userId: studentId,
     kind: "grade",
-    title: "Новые баллы",
+    title: nextTitle,
     body,
     href,
   }).returning({ id: notifications.id });
-  return { id: created.id, previousBody: null as string | null };
+  return { id: created.id, previousBody: null as string | null, previousTitle: null as string | null };
 }
 
 export async function applyMark(user: PublicUser, args: Record<string, unknown>) {

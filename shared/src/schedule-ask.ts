@@ -47,7 +47,7 @@ export interface ScheduleAsk {
   subject?: string;
 }
 
-export function scheduleAsk(text: string, names: string[] = [], today = moscowToday()): ScheduleAsk | null {
+export function scheduleAsk(text: string, names: string[] = [], today = moscowToday(), bias: "upcoming" | "past" = "upcoming"): ScheduleAsk | null {
   const t = text.toLowerCase().replace(/ё/g, "е");
   if (/перенос|изменен/.test(t) && /расписан|пар|есть ли|какие/.test(t)) return { when: "changes" };
   if (/когда/.test(t) && /пар|занят/.test(t)) {
@@ -58,7 +58,7 @@ export function scheduleAsk(text: string, names: string[] = [], today = moscowTo
     const month = MONTHS.find(([stem]) => monthOnly[1].startsWith(stem))?.[1];
     if (month) return { when: "month", month };
   }
-  const date = extractDate(t, today);
+  const date = extractDate(t, today, bias);
   if (date) {
     if (/недел/.test(t)) return { when: "week", date };
     if (/(?:^|\s)с\s+\d/.test(t)) return { when: "range", from: date, to: studyWeek(date).at(-1) };
@@ -103,24 +103,25 @@ function subjectOf(text: string, names: string[]): string | undefined {
   return pool.find((name) => q.includes(name.toLowerCase()));
 }
 
-function extractDate(text: string, today: string): string | null {
+function extractDate(text: string, today: string, bias: "upcoming" | "past"): string | null {
   const named = text.match(/(\d{1,2})\s+(январ\w*|феврал\w*|март\w*|апрел\w*|ма[йя]\w*|июн\w*|июл\w*|август\w*|сентябр\w*|октябр\w*|ноябр\w*|декабр\w*)/);
   if (named) {
     const month = MONTHS.find(([stem]) => named[2].startsWith(stem))?.[1];
-    if (month) return withYear(Number(named[1]), month, today);
+    if (month) return withYear(Number(named[1]), month, today, null, bias);
   }
   const numeric = text.match(/(?:^|[^\d])(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?(?!\d)/);
   if (!numeric) return null;
   const year = numeric[3] ? Number(numeric[3].length === 2 ? `20${numeric[3]}` : numeric[3]) : null;
-  return withYear(Number(numeric[1]), Number(numeric[2]), today, year);
+  return withYear(Number(numeric[1]), Number(numeric[2]), today, year, bias);
 }
 
-function withYear(day: number, month: number, today: string, year?: number | null): string | null {
+function withYear(day: number, month: number, today: string, year?: number | null, bias: "upcoming" | "past" = "upcoming"): string | null {
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   const fallback = Number(today.slice(0, 4));
   let y = year || fallback;
   const iso = (yearNumber: number) => `${yearNumber}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-  if (!year && iso(y) < addDays(today, -14)) y += 1;
+  if (!year && bias === "past" && iso(y) > today) y -= 1;
+  else if (!year && bias !== "past" && iso(y) < addDays(today, -14)) y += 1;
   const date = iso(y);
   return weekdayIndex(date) >= 0 ? date : null;
 }

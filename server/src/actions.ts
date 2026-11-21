@@ -412,6 +412,12 @@ async function writeAudit(
   return row.id;
 }
 
+function scoreText(value: unknown) {
+  if (value == null || value === "") return "—";
+  const n = typeof value === "number" ? value : Number(String(value).replace(",", "."));
+  return Number.isFinite(n) ? formatScore(n) : String(value);
+}
+
 async function buildPreview(user: PublicUser, name: string, args: Record<string, unknown>): Promise<Omit<ConfirmCard, "pendingId">> {
   if (name === "create_request") {
     const kind = String(args.kind);
@@ -494,9 +500,9 @@ async function buildPreview(user: PublicUser, name: string, args: Record<string,
         { label: "Группа", value: String(args.groupName ?? "его группа") },
         { label: "Предмет", value: String(args.discipline ?? "предмет") },
         { label: "Дата", value: journalDateLabel(date) },
-        { label: "Работа", value: `${args.title ?? work?.label ?? "Работа"} (вес ${args.weight ?? work?.weight ?? 1})` },
-        { label: "Баллы", value: `${args.points ?? args.value ?? "—"} из ${args.maxPoints ?? 10} баллов` },
-        { label: "Было", value: args.previous == null ? "—" : String(args.previous) },
+        { label: "Работа", value: `${args.title ?? work?.label ?? "Работа"} (вес ${formatScore(Number(args.weight ?? work?.weight ?? 1))})` },
+        { label: "Баллы", value: `${scoreText(args.points ?? args.value)} из ${args.maxPoints ?? 10} баллов` },
+        { label: "Было", value: args.previous == null || args.previous === "" ? "—" : `${scoreText(args.previous)} из ${args.maxPoints ?? 10}` },
         ...(args.comment ? [{ label: "Комментарий", value: String(args.comment) }] : []),
       ],
     };
@@ -780,7 +786,7 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
     const eventRows = instant
       ? [
           { requestId: row.id, status: "submitted", comment: "Заявление подтверждено", actorId: user.id },
-          { requestId: row.id, status: "ready", comment: "Справка сформирована автоматически", actorId: null },
+          { requestId: row.id, status: "ready", comment: "Справка сформирована\u00A0автоматически", actorId: null },
           { requestId: row.id, status: "issued", comment: "Можно скачать PDF", actorId: null },
         ]
       : [{ requestId: row.id, status: "submitted", comment: "Заявление подтверждено", actorId: user.id }];
@@ -976,7 +982,7 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
   async get_homework(user, args) {
     const row = await getStudentHomework(user, Number(args.assignmentId));
     return {
-      summary: `«${row.title}»: ${row.submission.statusLabel}. Срок ${row.deadline}.`,
+      summary: `«${row.title}»: ${row.submission.statusLabel}. Срок ${formatRuDate(row.deadline)}.`,
       ui: [{ type: "navigate", to: `/homework/${row.id}`, highlight: `homework-${row.id}` }],
     };
   },
@@ -1308,7 +1314,7 @@ async function undoAudit(user: PublicUser, auditId: number): Promise<Outcome> {
     if (undo.created) await getDb().delete(notifications).where(eq(notifications.href, `/grades?view=table&focus=${undo.markId}`));
     else if (undo.notice?.id) {
       if (undo.notice.previousBody == null) await getDb().delete(notifications).where(eq(notifications.id, undo.notice.id));
-      else await getDb().update(notifications).set({ body: undo.notice.previousBody }).where(eq(notifications.id, undo.notice.id));
+      else await getDb().update(notifications).set({ body: undo.notice.previousBody, ...(undo.notice.previousTitle ? { title: undo.notice.previousTitle } : {}) }).where(eq(notifications.id, undo.notice.id));
     }
     if (undo.createdColumnId) {
       const left = await getDb().select({ id: marks.id }).from(marks).where(eq(marks.columnId, undo.createdColumnId)).limit(1);
@@ -1372,23 +1378,44 @@ async function undoAudit(user: PublicUser, auditId: number): Promise<Outcome> {
       await getDb().update(lessonTopics).set({ topic: undo.topic }).where(and(eq(lessonTopics.groupName, undo.groupName), eq(lessonTopics.discipline, undo.discipline), eq(lessonTopics.lessonDate, undo.date)));
     }
   } else if (undo.type === "submission") {
-    if (undo.markId) await getDb().delete(marks).where(eq(marks.id, undo.markId));
-    if (undo.submissionId) {
-      const [submission] = await getDb().select().from(submissions).where(eq(submissions.id, undo.submissionId)).limit(1);
-      if (submission) {
-        const [assignment] = await getDb().select().from(assignments).where(eq(assignments.id, submission.assignmentId)).limit(1);
-        if (assignment) {
-          await getDb().delete(notifications).where(and(
-            eq(notifications.userId, submission.studentId),
-            eq(notifications.kind, "homework"),
-            eq(notifications.title, `Вернули на доработку: ${assignment.title}`),
-          ));
-        }
+    if (undo.markId) {
+      if (undo.previousMark) {
+        const prev = undo.previousMark;
+        await getDb().update(marks).set({
+          value: prev.value,
+          points: prev.points == null ? null : String(prev.points),
+          comment: prev.comment,
+          label: prev.label,
+          kind: prev.kind,
+          awardedOn: prev.awardedOn,
+          teacherId: prev.teacherId,
+          columnId: prev.columnId,
+        }).where(eq(marks.id, undo.markId));
+      } else if (undo.markCreated === false) {
+        await getDb().update(marks).set({ points: undo.previousPoints == null ? null : String(undo.previousPoints) }).where(eq(marks.id, undo.markId));
+      } else {
+        await getDb().delete(marks).where(eq(marks.id, undo.markId));
       }
+    }
+    if (undo.noticeId) {
+      if (undo.noticeCreated === false && undo.previousNotice) {
+        await getDb().update(notifications).set({ title: undo.previousNotice.title, body: undo.previousNotice.body, kind: undo.previousNotice.kind }).where(eq(notifications.id, undo.noticeId));
+      } else {
+        await getDb().delete(notifications).where(eq(notifications.id, undo.noticeId));
+      }
+    }
+    if (undo.submissionId) {
       await getDb()
         .update(submissions)
-        .set({ status: undo.previousStatus, score: undo.previousScore, teacherComment: undo.previousComment })
+        .set({ status: undo.previousStatus, score: undo.previousScore == null ? null : String(undo.previousScore), teacherComment: undo.previousComment })
         .where(eq(submissions.id, undo.submissionId));
+    }
+    if (undo.assignmentId != null && undo.previousColumnId !== undefined) {
+      await getDb().update(assignments).set({ columnId: undo.previousColumnId }).where(eq(assignments.id, undo.assignmentId));
+    }
+    if (undo.createdColumnId) {
+      const left = await getDb().select({ id: marks.id }).from(marks).where(eq(marks.columnId, undo.createdColumnId)).limit(1);
+      if (!left[0]) await getDb().delete(journalColumns).where(eq(journalColumns.id, undo.createdColumnId));
     }
   } else if (undo.type === "flag") {
     if (!undo.flagged) {

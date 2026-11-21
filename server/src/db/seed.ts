@@ -279,7 +279,7 @@ export async function seed() {
 
     await tx.insert(requestEvents).values([
       { requestId: study.id, status: "submitted", comment: "Заявление принято", actorId: sorokin.id },
-      { requestId: study.id, status: "ready", comment: "Справка сформирована автоматически", actorId: null },
+      { requestId: study.id, status: "ready", comment: "Справка сформирована\u00A0автоматически", actorId: null },
       { requestId: study.id, status: "issued", comment: "Доступна для скачивания", actorId: null },
       { requestId: military.id, status: "submitted", comment: "Заявление принято", actorId: sorokin.id },
       { requestId: military.id, status: "in_progress", comment: "Сверяем сведения группы.", actorId: staff.id },

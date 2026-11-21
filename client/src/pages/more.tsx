@@ -6,6 +6,8 @@ import { api } from "../lib/api";
 import { useAction } from "../lib/action";
 import { useAuth } from "../lib/auth";
 import { ModelControls } from "../components/agent-panel";
+import { Fact, NotificationItem, RequestItem, SectionHeader } from "../components/items";
+import { glueLast, noticeView } from "../lib/format";
 import { BackLink, Button, Choice, ContestNote, EmptyState, ErrorState, Glass, LoadingBlock, Mark } from "../components/ui";
 
 export function NotificationsPage() {
@@ -20,20 +22,21 @@ export function NotificationsPage() {
         <h1 className="min-w-0">Уведомления</h1>
         <Button className="h-11 shrink-0 whitespace-nowrap px-4" variant="glass" data-agent-action="notification-read-all" onClick={() => void run("mark_notifications_read", { all: true })}>Прочитать все</Button>
       </div>
-      {items.length === 0 ? <EmptyState title="Тихо" text="Новых объявлений и напоминаний нет." /> : items.map((note) => {
-        const body = (
-          <div className="flex min-h-11 items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="truncate font-semibold">{note.title}</h2>
-              <p className="mt-1 line-clamp-2 text-sm text-[var(--muted)]">{note.body}</p>
-            </div>
-            {!note.readAt ? <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-[var(--brand)]" aria-label="Не прочитано" /> : null}
-          </div>
-        );
+      {items.length === 0 ? <EmptyState title="Тихо" text="Новых объявлений и напоминаний нет." /> : ["Сегодня", "На неделе", "Раньше"].map((bucket) => {
+        const group = items.filter((note) => noteBucket(note) === bucket);
+        if (!group.length) return null;
         return (
-          <SwipeNote key={note.id} unread={!note.readAt} onRead={() => void run("mark_notifications_read", { ids: [note.id] })}>
-            {note.href ? <Link to={note.href} className="liquid-glass block"><div className="glass-pad p-4">{body}</div></Link> : <Glass>{body}</Glass>}
-          </SwipeNote>
+          <section key={bucket} className="space-y-2">
+            <SectionHeader title={bucket} />
+            {group.map((note) => {
+              const view = noticeView(note);
+              return (
+                <SwipeNote key={note.id} unread={!note.readAt} onRead={() => void run("mark_notifications_read", { ids: [note.id] })}>
+                  <NotificationItem type={view.type} title={view.title} body={view.body} at={note.createdAt ?? new Date().toISOString()} unread={!note.readAt} href={note.href ?? undefined} />
+                </SwipeNote>
+              );
+            })}
+          </section>
         );
       })}
     </div>
@@ -87,7 +90,15 @@ function SwipeNote({ children, onRead, unread = false }: { children: ReactNode; 
   );
 }
 
-interface Note { id: number; title: string; body: string; href: string | null; readAt: string | null }
+function noteBucket(note: Note) {
+  const day = (note.createdAt ?? "").slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  if (!day || day === today) return "Сегодня";
+  const age = (Date.parse(today) - Date.parse(day)) / 86_400_000;
+  return age < 7 ? "На неделе" : "Раньше";
+}
+
+interface Note { id: number; title: string; body: string; href: string | null; readAt: string | null; createdAt?: string }
 
 export function ProfilePage() {
   const { user } = useAuth();
@@ -95,7 +106,7 @@ export function ProfilePage() {
   if (!user) return null;
   const rows = [
     ["ФИО", user.fullName],
-    ["Факультет / институт", user.institute],
+    ["Институт", user.institute],
     ["Направление", user.direction],
     ["Курс", user.course ? String(user.course) : null],
     ["Группа", user.groupName],
@@ -109,17 +120,14 @@ export function ProfilePage() {
         <div className="mb-4 flex items-center gap-3">
           <span className="grid h-14 w-14 place-items-center rounded-full bg-[var(--primary)] text-lg text-[var(--primary-ink)]">{user.initials}</span>
           <div className="min-w-0">
-            <p className="line-clamp-2 text-xl font-semibold">{user.fullName}</p>
-            <p className="text-sm text-[var(--muted)]">{user.role === "teacher" ? "Преподаватель" : user.role === "staff" ? "Учебный офис" : "Студент"}</p>
-            {user.groupName ? <span className="mt-1 inline-flex rounded-full bg-white/70 px-2 py-1 text-xs font-semibold">{user.groupName}</span> : user.role === "teacher" ? <p className="text-sm text-[var(--muted)]">БИ-3-26-04 · ЮР-1-26-02</p> : user.role === "staff" ? <p className="text-sm text-[var(--muted)]">Сотрудник учебного офиса</p> : null}
+            <p className="t-title item-title">{user.fullName}</p>
+            <p className="t-muted">{user.role === "teacher" ? "Преподаватель" : user.role === "staff" ? "Учебный офис" : "Студент"}</p>
+            {user.groupName ? <span className="t-chip mt-1 inline-flex rounded-full bg-white/70 px-2 py-1">{user.groupName}</span> : null}
           </div>
         </div>
         <dl className="space-y-2">
           {rows.map(([label, value]) => (
-            <div key={label} className="flex justify-between gap-3 border-t border-white/40 py-2 text-sm">
-              <dt className="text-[var(--muted)]">{label}</dt>
-              <dd className="text-right font-medium">{value}</dd>
-            </div>
+            <Fact key={label} label={String(label)} value={String(value)} />
           ))}
         </dl>
         <p className="mt-3 text-xs text-[var(--muted)]">ФИО, группа и направление приходят из учебного офиса. Ошибку можно исправить заявлением.</p>
@@ -261,11 +269,11 @@ export function StaffRequestPage() {
   return (
     <div className="space-y-4" data-agent-target={`staff-request-${id}`}>
       <BackLink to="/staff" />
-      <h1 className="line-clamp-2">{detail.data.request.title}</h1>
-      <p className="text-sm text-[var(--muted)]">№{detail.data.request.id} · {STATUS_LABEL[detail.data.request.status]}</p>
+      <h1 className="t-page item-title">{detail.data.request.title}</h1>
+      <RequestItem href={`/staff/requests/${id}`} number={detail.data.request.id} title={detail.data.request.title} statusLabel={STATUS_LABEL[detail.data.request.status]} createdAt="2026-11-18" student={detail.data.student?.fullName} group={detail.data.student?.groupName ?? undefined} purpose={detail.data.request.purpose ?? undefined} />
       <Glass>
-        <p className="text-xs uppercase text-[var(--muted)]">{triage.category}</p>
-        <p className="mt-1 text-sm">{detail.data.student?.fullName} · {detail.data.student?.groupName}</p>
+        <Fact label="Студент" value={detail.data.student?.fullName ?? "Студент"} />
+        <Fact label="Группа" value={detail.data.student?.groupName ?? "Группа"} />
         <p className="mt-3 text-sm">{triage.summary}</p>
         <p className="mt-2 text-sm text-[var(--muted)]">{detail.data.request.body}</p>
       </Glass>
@@ -287,7 +295,7 @@ export function StaffRequestPage() {
       <Glass>
         <ol className="timeline space-y-3 pl-4">
           {detail.data.events.map((event) => (
-            <li key={event.id}><p className="font-semibold">{STATUS_LABEL_SAFE[event.status]}</p><p className="text-sm text-[var(--muted)]">{event.comment}</p></li>
+            <li key={event.id}><p className="font-semibold">{STATUS_LABEL_SAFE[event.status]}</p><p className="text-sm text-[var(--muted)]">{event.comment ? glueLast(event.comment) : null}</p></li>
           ))}
         </ol>
       </Glass>
@@ -340,7 +348,7 @@ export function StaffAnnouncePage() {
         </form>
       </Glass>
       {list.data?.announcements.map((item) => (
-        <Glass key={item.id}><h2 className="font-semibold">{item.title}</h2><p className="mt-1 text-sm text-[var(--muted)]">{item.body}</p></Glass>
+        <NotificationItem key={item.id} type="announcement" title={item.title} body={item.body} at="2026-11-21" unread={false} />
       ))}
     </div>
   );

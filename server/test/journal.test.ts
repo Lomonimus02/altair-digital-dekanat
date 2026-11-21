@@ -71,6 +71,19 @@ it("фразы журнала не путаются со сданной рабо
   expect(titled.steps[0]?.args.title).toBe("Лабораторная 3");
   const homework = parseIntent("оцени работу «Задачник» Сорокина на 5", "teacher");
   expect(homework.steps[0]?.tool).toBe("teacher_grade_homework");
+  expect(journalDate("22.10", "2026-11-21")).toBe("2026-10-22");
+  expect(journalDate("22 октября", "2026-11-21")).toBe("2026-10-22");
+  expect(journalDate("поставь оценку 22.10", "2026-11-21")).toBe("2026-10-22");
+  const zero = parseIntent("поставь 0 баллов из 30 Сорокину за контрольную", "teacher");
+  expect(zero.steps[0]?.tool).toBe("teacher_set_mark");
+  expect(zero.steps[0]?.args.points).toBe(0);
+  expect(zero.steps[0]?.args.maxPoints).toBe(30);
+  const comma = parseIntent("поставь 10,5 из 15 Сорокину за контрольную", "teacher");
+  expect(comma.steps[0]?.args.points).toBe(10.5);
+  expect(comma.steps[0]?.args.maxPoints).toBe(15);
+  const hypo = parseIntent("что если 0 баллов из 30 по матану", "student", ["Математический анализ"]);
+  expect(hypo.steps[0]?.args.points).toBe(0);
+  expect(hypo.steps[0]?.args.maxPoints).toBe(30);
 });
 
 it("журнал закрыт чужим, а оценка без строки дисциплины проходит", async () => {
@@ -120,7 +133,8 @@ it("карточка оценки показывает дату и прежню�
   const fields = Object.fromEntries((card.confirm?.fields ?? card.fields ?? body.confirm?.fields ?? []).map((field: { label: string; value: string }) => [field.label, field.value]));
   expect(fields["Дата"]).toMatch(/^\d{2}\.\d{2}/);
   expect(fields["Дата"]).not.toMatch(/2026-/);
-  expect(fields["Было"]).toBeTruthy();
+  expect(fields["Было"] === "—" || /из \d+$/.test(fields["Было"])).toBe(true);
+  if (fields["Работа"]) expect(fields["Работа"]).not.toMatch(/вес \d+\.\d/);
   if (body.confirm?.pendingId) {
     const rejected = await authedPost(teacher, "/api/agent/reject", { pendingId: body.confirm.pendingId });
     expect(rejected.statusCode).toBe(200);
@@ -250,18 +264,22 @@ it("уточнение предмета открывает журнал, кол�
   if (five.json().confirm?.pendingId) await authedPost(teacher, "/api/agent/reject", { pendingId: five.json().confirm.pendingId });
 });
 
+async function freeCaseDay(startOffset: number, span: number) {
+  const pool = getPool();
+  await pool.query("delete from journal_columns where discipline = 'Базы данных' and title in ('Кейс другой', 'Кейс ещё', 'Кейс на 10', 'Кейс на 15')");
+  for (let step = 0; step < span; step += 1) {
+    const candidate = addDays(moscowToday(), startOffset - step);
+    if (candidate < addDays(moscowToday(), -13)) break;
+    const taken = await pool.query("select count(*)::int as n from journal_columns where group_name='БИ-3-26-04' and discipline='Базы данных' and lesson_date=$1 and work_type='case'", [candidate]);
+    if (taken.rows[0].n === 0 && new Date(`${candidate}T00:00:00Z`).getUTCDay() !== 0) return candidate;
+  }
+  throw new Error("нет свободного дня для кейса");
+}
+
 it("явный максимум не подменяется молча, баллы выше максимума не попадают в карточку", async () => {
   const teacher = await login("orlov.pn", "Altair-teacher-58");
   const pool = getPool();
-  let date = addDays(moscowToday(), -3);
-  for (let step = 0; step < 10; step += 1) {
-    const candidate = addDays(moscowToday(), -3 - step);
-    const taken = await pool.query("select count(*)::int as n from journal_columns where group_name='БИ-3-26-04' and discipline='Базы данных' and lesson_date=$1 and work_type='case'", [candidate]);
-    if (taken.rows[0].n === 0 && new Date(`${candidate}T00:00:00Z`).getUTCDay() !== 0) {
-      date = candidate;
-      break;
-    }
-  }
+  let date = await freeCaseDay(-3, 10);
   const spoken = `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}`;
   const created = await act(teacher, "teacher_add_journal_column", { groupName: "БИ-3-26-04", discipline: "Базы данных", date, workType: "case", title: "Кейс на 15", maxPoints: 15, weight: 2 });
   expect(created.statusCode, created.body).toBe(200);
@@ -280,6 +298,23 @@ it("явный максимум не подменяется молча, балл
   expect(keptFields["Баллы"]).toBe("14 из 15 баллов");
   if (kept.json().confirm?.pendingId) await authedPost(teacher, "/api/agent/reject", { pendingId: kept.json().confirm.pendingId });
 
+  const scaledAsk = await authedPost(teacher, "/api/agent/turn", { message: `поставь 14 из 20 Сорокину за кейс ${spoken} по базам`, mode: "fallback" });
+  const scaleChoice = (scaledAsk.json().choices ?? []).find((choice: { entityId?: string; label: string }) => choice.entityId === "fit:scale");
+  expect(scaleChoice?.clarificationId).toBeTruthy();
+  const scaled = await authedPost(teacher, "/api/agent/clarify", { clarificationId: scaleChoice.clarificationId, entityId: "fit:scale" });
+  const scaledFields = Object.fromEntries((scaled.json().confirm?.fields ?? []).map((field: { label: string; value: string }) => [field.label, field.value]));
+  expect(scaledFields["Баллы"]).toBe("10,5 из 15 баллов");
+  if (scaled.json().confirm?.pendingId) await authedPost(teacher, "/api/agent/reject", { pendingId: scaled.json().confirm.pendingId });
+
+  const freshAsk = await authedPost(teacher, "/api/agent/turn", { message: `поставь 14 из 20 Сорокину за кейс ${spoken} по базам`, mode: "fallback" });
+  const freshChoice = (freshAsk.json().choices ?? []).find((choice: { entityId?: string; label: string }) => choice.entityId === "fit:fresh");
+  expect(freshChoice?.clarificationId).toBeTruthy();
+  const fresh = await authedPost(teacher, "/api/agent/clarify", { clarificationId: freshChoice.clarificationId, entityId: "fit:fresh" });
+  const freshFields = Object.fromEntries((fresh.json().confirm?.fields ?? []).map((field: { label: string; value: string }) => [field.label, field.value]));
+  expect(freshFields["Работа"]).toMatch(/^Кейс 2 /);
+  expect(freshFields["Работа"]).not.toMatch(/Кейс на 15/);
+  if (fresh.json().confirm?.pendingId) await authedPost(teacher, "/api/agent/reject", { pendingId: fresh.json().confirm.pendingId });
+
   const eighteen = await authedPost(teacher, "/api/agent/turn", { message: `поставь 18 из 20 Сорокину за кейс ${spoken} по базам`, mode: "fallback" });
   const over = eighteen.json();
   expect(over.confirm).toBeFalsy();
@@ -287,16 +322,7 @@ it("явный максимум не подменяется молча, балл
   expect(over.say).toMatch(/13,5 из 15/);
   expect(over.say).toMatch(/больше этого максимума/);
 
-  let small = addDays(date, -1);
-  for (let step = 1; step < 10; step += 1) {
-    const candidate = addDays(date, -step);
-    if (candidate < addDays(moscowToday(), -13)) break;
-    const taken = await pool.query("select count(*)::int as n from journal_columns where group_name='БИ-3-26-04' and discipline='Базы данных' and lesson_date=$1 and work_type='case'", [candidate]);
-    if (taken.rows[0].n === 0 && new Date(`${candidate}T00:00:00Z`).getUTCDay() !== 0) {
-      small = candidate;
-      break;
-    }
-  }
+  const small = await freeCaseDay(-4, 10);
   const smallSpoken = `${Number(small.slice(8, 10))}.${Number(small.slice(5, 7))}`;
   const ten = await act(teacher, "teacher_add_journal_column", { groupName: "БИ-3-26-04", discipline: "Базы данных", date: small, workType: "case", title: "Кейс на 10", maxPoints: 10, weight: 1 });
   expect(ten.statusCode, ten.body).toBe(200);
@@ -310,15 +336,7 @@ it("явный максимум не подменяется молча, балл
 it("одна колонка того же типа переиспользуется, две спрашивают, отмена правки возвращает текст уведомления", async () => {
   const teacher = await login("orlov.pn", "Altair-teacher-58");
   const pool = getPool();
-  let date = addDays(moscowToday(), -2);
-  for (let step = 0; step < 12; step += 1) {
-    const candidate = addDays(moscowToday(), -2 - step);
-    const taken = await pool.query("select count(*)::int as n from journal_columns where group_name='БИ-3-26-04' and discipline='Базы данных' and lesson_date=$1 and work_type='case'", [candidate]);
-    if (taken.rows[0].n === 0 && new Date(`${candidate}T00:00:00Z`).getUTCDay() !== 0) {
-      date = candidate;
-      break;
-    }
-  }
+  const date = await freeCaseDay(-2, 12);
   const spoken = `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}`;
   const first = await act(teacher, "teacher_add_journal_column", { groupName: "БИ-3-26-04", discipline: "Базы данных", date, workType: "case", title: "Кейс другой" });
   expect(first.statusCode, first.body).toBe(200);
@@ -327,7 +345,7 @@ it("одна колонка того же типа переиспользует�
   const body = turn.json();
   expect(body.summary ?? "").not.toMatch(/Создам/);
   const fields = Object.fromEntries((body.confirm?.fields ?? []).map((field: { label: string; value: string }) => [field.label, field.value]));
-  expect(fields["Работа"]).toMatch(/Кейс другой/);
+  expect(fields["Работа"], body.say).toMatch(/Кейс другой/);
   if (body.confirm?.pendingId) await authedPost(teacher, "/api/agent/reject", { pendingId: body.confirm.pendingId });
   const second = await act(teacher, "teacher_add_journal_column", { groupName: "БИ-3-26-04", discipline: "Базы данных", date, workType: "case", title: "Кейс ещё" });
   expect(second.statusCode, second.body).toBe(200);
@@ -340,11 +358,11 @@ it("одна колонка того же типа переиспользует�
   const edited = await act(teacher, "teacher_set_mark", { columnId, studentName: "Сорокин", points: 9 });
   expect(edited.statusCode, edited.body).toBe(200);
   const fresh = await pool.query("select body from notifications where href like '%focus=' || (select id from marks where column_id=$1 limit 1)", [columnId]);
-  expect(fresh.rows[0].body).toMatch(/9\//);
+  expect(fresh.rows[0].body).toMatch(/9 из/);
   await act(teacher, "undo", { auditId: edited.json().undoOffer.auditId });
   const restored = await pool.query("select body from notifications where href like '%focus=' || (select id from marks where column_id=$1 limit 1)", [columnId]);
-  expect(restored.rows[0].body).toMatch(/8\//);
-  expect(restored.rows[0].body).not.toMatch(/9\//);
+  expect(restored.rows[0].body).toMatch(/8 из/);
+  expect(restored.rows[0].body).not.toMatch(/9 из/);
   const student = await login("sorokin.mo", "Altair-student-31");
   const whatIf = await authedPost(student, "/api/agent/turn", { message: "что если 0 из 10 по программированию", mode: "fallback" });
   const say = String(whatIf.json().say ?? "");
