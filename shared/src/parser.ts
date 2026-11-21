@@ -1,5 +1,6 @@
 import type { Proposal, RequestKind, Role } from "./domain";
 import { addDays, moscowToday, weekdayIndex } from "./dates";
+import { journalDate, parseWorkType, WORK_TYPES } from "./journal";
 import { scheduleAsk } from "./schedule-ask";
 
 const ALIASES: [string, string][] = [
@@ -8,6 +9,7 @@ const ALIASES: [string, string][] = [
   ["математическ", "математический анализ"],
   ["линал", "линейная алгебра"],
   ["линейн", "линейная алгебра"],
+  ["бд", "базы данных"],
   ["базам данных", "базы данных"],
   ["базы данных", "базы данных"],
   ["баз данных", "базы данных"],
@@ -35,7 +37,8 @@ export function matchDiscipline(query: string | undefined, names: string[]): str
   if (!query) return undefined;
   const q = norm(query);
   for (const [alias, canonical] of ALIASES) {
-    if (q.includes(alias)) {
+    const hit = alias.length <= 3 ? new RegExp(`(^|[^а-яёa-z])${alias}([^а-яёa-z]|$)`).test(q) : q.includes(alias);
+    if (hit) {
       const found = names.find((name) => norm(name).includes(canonical));
       if (found) return found;
     }
@@ -145,15 +148,25 @@ export function parseIntent(message: string, role: Role, disciplines: string[] =
     return step("Собрал заявление. Его нужно подтвердить.", "create_request", { kind, ...(purpose ? { purpose } : {}) });
   }
 
-  if (/если .*получ|если постав|если будет оценк/.test(t)) {
-    const valueMatch = t.match(/(\d)\b/);
-    const value = valueMatch ? Number(valueMatch[1]) : null;
+  if (/что если|если\s+(?:я\s+)?(?:получу|поставлю|поставят|будет|сдам)/.test(t)) {
+    const outOf = t.match(/(\d+(?:[.,]\d+)?)\s*из\s*(\d+)/);
+    const scored = outOf ?? t.match(/(\d+(?:[.,]\d+)?)\s*балл/) ?? t.match(/(\d+(?:[.,]\d+)?)/);
+    const points = Number(String(scored?.[1] ?? "").replace(",", "."));
     const subject = matchDiscipline(t, disciplines);
-    if (value != null && value >= 2 && value <= 5 && subject) {
-      return step("Считаю без записи в ведомость.", "simulate_mark", { subject, value });
+    if (Number.isFinite(points)) {
+      return step("Считаю баллы без записи в ведомость.", "simulate_mark", {
+        ...(subject ? { subject } : {}),
+        value: points,
+        points,
+        ...(outOf ? { maxPoints: Number(outOf[2]) } : {}),
+      });
     }
   }
 
+  if (/балл/.test(t) && !/поставь|оценк/.test(t)) {
+    const subject = matchDiscipline(t, disciplines);
+    return step("Смотрю баллы.", "get_grades", subject ? { subject } : {});
+  }
   if (/автомат|сколько мне|сколько нужн|сесс|как у меня|как я иду|что нужно/.test(t)) {
     const subject = matchDiscipline(t, disciplines);
     return step("Смотрю сессию.", "get_session_navigator", subject ? { subject } : {});
@@ -216,6 +229,10 @@ function parseTeacher(t: string, raw: string): Proposal | null {
     const discipline = /баз/.test(t) ? "Базы данных" : /програм/.test(t) ? "Программирование" : t.replace(/.*сводка по\s*/, "");
     return step("Собираю сводку.", "teacher_subject_summary", { discipline });
   }
+  const grading = gradingCommand(raw, t);
+  if (grading) return grading;
+  const journal = journalCommand(raw, t);
+  if (journal) return journal;
   if (grade && /поставь|оцен/.test(t)) {
     const score = Number(grade[1].length === 1 ? grade[1] : grade[2]);
     const name = (grade[1].length === 1 ? grade[2] : grade[1]).replace(/у$/, "");
@@ -371,8 +388,90 @@ export function extractComment(raw: string): string {
   return "Нужно доработать.";
 }
 
+function gradingCommand(raw: string, t: string): Proposal | null {
+  if (!/вес|максимум/.test(t)) return null;
+  const work = parseWorkType(t);
+  if (!work) return null;
+  const weight = t.match(/вес\D+(\d+(?:[.,]\d+)?)/);
+  const max = t.match(/максимум\D+(\d+)/);
+  if (!weight && !max) return null;
+  return step("Меняю систему оценивания. Нужно подтверждение.", "teacher_update_grading", {
+    workType: work.type,
+    ...(weight ? { weight: Number(weight[1].replace(",", ".")) } : {}),
+    ...(max ? { maxPoints: Number(max[1]) } : {}),
+    ...(disciplineHint(t) ? { discipline: disciplineHint(t) } : {}),
+  });
+}
+
+function journalCommand(raw: string, t: string): Proposal | null {
+  const letter = raw.match(/поставь\s+([а-яё]{3,})\s+([нбоу])(?=\s|$)/i);
+  if (letter && !/(^|\s)[2-5](?!\d)/.test(t)) {
+    const date = journalDate(raw);
+    if (!date) return null;
+    const status = { н: "absent", б: "sick", о: "late", у: "excused" }[letter[2].toLowerCase()] ?? "absent";
+    return step("Отмечаю явку.", "teacher_set_attendance", {
+      studentName: letter[1],
+      date,
+      status,
+      present: status === "present",
+      groupName: "БИ-3-26-04",
+      discipline: disciplineHint(t) || "Базы данных",
+    });
+  }
+  if (/оцени/.test(t) && /работ|задан/.test(t) && !parseWorkType(t)) {
+    const quoted = raw.match(/«([^»]+)»/)?.[1] ?? "";
+    const score = Number(t.match(/на\s+([2-5])(?!\d)/)?.[1] ?? t.match(/([2-5])(?!\d)/)?.[1] ?? 0);
+    const name = t.match(/(сорокин\w*|волков\w*|громов\w*|белов\w*)/)?.[1] ?? "студент";
+    return step("Готовлю оценку за сданную работу.", "teacher_grade_homework", { studentName: name, query: quoted, score });
+  }
+  const pointsMatch = raw.match(/(\d+(?:[.,]\d+)?)\s*балл/iu) ?? (t.match(/поставь\s+(\d+(?:[.,]\d+)?)(?!\d)/) && Number((t.match(/поставь\s+(\d+(?:[.,]\d+)?)(?!\d)/) ?? [])[1]) > 5 ? t.match(/поставь\s+(\d+(?:[.,]\d+)?)(?!\d)/) : null);
+  const outOf = raw.match(/из\s+(\d+)/iu);
+  if (pointsMatch && Number(pointsMatch[1].replace(",", ".")) > 5) {
+    const points = Number(pointsMatch[1].replace(",", "."));
+    const name = raw.match(/(?:сорокин|волков|громов|белов)[а-яё]*/iu)?.[0]
+      ?? raw.match(/поставь\s+\d+(?:[.,]\d+)?(?:\s+из\s+\d+)?(?:\s+балл\w*)?\s+([А-ЯЁа-яё]{3,})/iu)?.[1];
+    const workPoints = parseWorkType(raw);
+    const datePoints = journalDate(raw);
+    if (name) {
+      return step("Готовлю баллы в журнал.", "teacher_set_mark", {
+        studentName: name,
+        points,
+        ...(outOf ? { maxPoints: Number(outOf[1]) } : {}),
+        ...(workPoints ? { workType: workPoints.type, title: workPoints.title ?? WORK_TYPES[workPoints.type].label } : {}),
+        ...(datePoints ? { date: datePoints } : {}),
+        ...(disciplineHint(t) ? { discipline: disciplineHint(t) } : {}),
+      });
+    }
+  }
+  const work = parseWorkType(raw);
+  const date = journalDate(raw);
+  const quoted = raw.match(/«([^»]+)»/)?.[1];
+  const journalish = Boolean(work && (work.type !== "lab" || date || quoted)) || Boolean(date && /[2-5]/.test(t));
+  if (!journalish || !/[2-5]/.test(t)) return null;
+  const score = t.match(/поставь\s+([2-5])(?!\d)/)?.[1]
+    ?? t.match(/поставь\s+[а-яё]{3,}\s+([2-5])(?!\d)/)?.[1]
+    ?? t.match(/([а-яё]{4,})\s+([2-5])(?!\d)/)?.[2]
+    ?? t.match(/на\s+([2-5])(?!\d)/)?.[1];
+  const name = raw.match(/поставь\s+[2-5]\s+([А-ЯЁа-яё]{3,})/iu)?.[1]
+    ?? raw.match(/поставь\s+([А-ЯЁа-яё]{3,})\s+[2-5]/iu)?.[1]
+    ?? raw.match(/([А-ЯЁа-яё]{4,})\s+[2-5]\s+за/iu)?.[1]
+    ?? raw.match(/«[^»]+»\s+([А-ЯЁа-яё]{4,})/iu)?.[1];
+  if (!score || !name) return null;
+  return step("Готовлю баллы в журнал.", "teacher_set_mark", {
+    studentName: name,
+    points: Number(score),
+    value: Number(score),
+    ...(outOf ? { maxPoints: Number(outOf[1]) } : {}),
+    ...(work ? { workType: work.type, label: work.title ?? WORK_TYPES[work.type].label, title: quoted ?? work.title } : {}),
+    ...(quoted ? { title: quoted.replace(/^Лабораторную/i, "Лабораторная").replace(/^Контрольную/i, "Контрольная"), label: quoted.replace(/^Лабораторную/i, "Лабораторная") } : {}),
+    ...(date ? { date } : {}),
+    ...(disciplineHint(t) ? { discipline: disciplineHint(t) } : {}),
+    ...(work?.type === "credit" ? { kind: "credit" } : {}),
+  });
+}
+
 function disciplineHint(t: string) {
-  if (/баз/.test(t)) return "базы данных";
+  if (/(^|[^а-яё])бд([^а-яё]|$)/.test(t) || /баз/.test(t)) return "базы данных";
   if (/програм/.test(t)) return "программирование";
   if (/информац/.test(t)) return "информационные технологии";
   if (/матан|математическ/.test(t)) return "математический анализ";

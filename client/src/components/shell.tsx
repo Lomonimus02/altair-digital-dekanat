@@ -71,6 +71,7 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
     let pulling = false;
     const onStart = (event: TouchEvent) => {
       if (window.scrollY > 4) return;
+      if (event.target instanceof Element && event.target.closest("[data-scroll-x]")) return;
       startY = event.touches[0]?.clientY ?? 0;
       pulling = true;
     };
@@ -143,8 +144,9 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
         { to: "/regulations", label: "Регламенты", icon: ScrollText },
         { to: "/audit", label: "Журнал", icon: Sparkles },
         { to: "/profile", label: "Профиль", icon: UserRound },
+        { to: "/staff/journal", label: "Журнал оценок", icon: GraduationCap },
       ];
-  const tabs = [links[0], links[1], links[2]];
+  const tabs = teacher ? links.slice(0, 4) : student ? links.slice(0, 4) : [links[0], links[1], links[4]];
   const tabTargets = new Set(tabs.map((link) => link.to));
   const moreLinks = links.filter((link) => !tabTargets.has(link.to));
 
@@ -174,7 +176,7 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
         </div>
         <UserChip onLogout={() => void logout()} />
       </aside>
-      <div className="min-w-0">
+      <div className="min-w-0 overflow-x-hidden">
         <header className="flex items-center justify-between gap-3 px-4 pt-[max(1rem,env(safe-area-inset-top))] md:hidden">
           <Brand compact />
           <div className="flex items-center gap-2">
@@ -242,25 +244,22 @@ function MobileNav({
   }, []);
   return (
     <nav
-      className={`fixed inset-x-3 z-50 mx-auto max-w-md transition-transform duration-300 ease-out md:hidden ${hidden ? "translate-y-[calc(100%+2rem)]" : "translate-y-0"}`}
-      style={{ bottom: "max(10px, env(safe-area-inset-bottom))" }}
+      className={`fixed inset-x-4 z-50 mx-auto grid w-[calc(100%-2rem)] max-w-md grid-cols-[minmax(0,1fr)_auto] items-center gap-2 transition-transform duration-300 ease-out md:hidden ${hidden ? "translate-y-[calc(100%+2rem)]" : "translate-y-0"}`}
+      style={{ bottom: "max(16px, env(safe-area-inset-bottom))" }}
       aria-label="Нижняя навигация"
     >
-      <div className="mobile-nav-pill grid min-h-[4.25rem] grid-cols-5 items-end rounded-[28px] px-1 pb-1 pt-1">
-        {tabs.slice(0, 2).map((link) => (
+      <div className="mobile-nav-pill grid min-h-14 min-w-0 auto-cols-fr grid-flow-col items-center rounded-full px-1">
+        {tabs.map((link) => (
           <TabLink key={link.to} link={link} />
         ))}
-        <button type="button" data-agent-action="nav-agent" className="tap relative -top-3 grid h-14 w-14 justify-self-center place-items-center rounded-full bg-[var(--primary)] text-[var(--primary-ink)] shadow-[0_10px_24px_-12px_rgba(2,191,122,0.9)]" aria-label="Спросить деканат" onClick={onAgent}>
-          <Sparkles className="h-6 w-6" />
-        </button>
-        {tabs.slice(2, 3).map((link) => (
-          <TabLink key={link.to} link={link} />
-        ))}
-        <button type="button" data-agent-action="nav-more" className="tap flex min-h-11 flex-col items-center justify-center rounded-full" onClick={onMore}>
+        <button type="button" data-agent-action="nav-more" className="flex min-h-11 min-w-0 flex-col items-center justify-center rounded-full px-0.5 py-1 active:scale-95 motion-reduce:active:scale-100" onClick={onMore}>
           <Menu className="h-5 w-5" />
-          <span className="text-[10px] font-medium">Ещё</span>
+          <span className="max-w-full truncate text-[11px] font-medium leading-tight">Ещё</span>
         </button>
       </div>
+      <button type="button" data-agent-action="nav-agent" className="mobile-nav-pill grid h-14 w-14 shrink-0 place-items-center rounded-full active:scale-95 motion-reduce:active:scale-100" aria-label="Спросить деканат" onClick={onAgent}>
+        <Sparkles className="h-6 w-6 text-[var(--primary)]" />
+      </button>
     </nav>
   );
 }
@@ -268,12 +267,12 @@ function MobileNav({
 function TabLink({ link }: { link: { to: string; label: string; short?: string; icon: typeof House; end?: boolean; action?: string } }) {
   const reduce = useReducedMotion();
   return (
-    <NavLink to={link.to} end={link.end} data-agent-action={link.action} className="tap relative flex min-h-11 min-w-0 flex-col items-center justify-center rounded-full px-0.5 py-1">
+    <NavLink to={link.to} end={link.end} data-agent-action={link.action} className="relative flex min-h-11 min-w-0 flex-col items-center justify-center rounded-full px-0.5 py-1 active:scale-95 motion-reduce:active:scale-100">
       {({ isActive }) => (
         <>
-          {isActive ? <motion.span layoutId="mobileActive" className="absolute inset-1 rounded-full bg-white/80 dark:bg-white/10" transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 420, damping: 34 }} /> : null}
+          {isActive ? <motion.span layoutId="mobileActive" className="absolute inset-1 rounded-full bg-white/80 dark:bg-white/10" transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 350, damping: 30 }} /> : null}
           <link.icon className={`relative h-5 w-5 ${isActive ? "text-[var(--primary)]" : ""}`} />
-          <span className="relative max-w-full truncate text-[10px] font-medium leading-tight">{link.short ?? link.label}</span>
+          <span className="relative max-w-full text-[10px] font-medium leading-tight">{link.short ?? link.label}</span>
         </>
       )}
     </NavLink>

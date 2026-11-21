@@ -341,7 +341,8 @@ export async function gradeSubmission(user: PublicUser, assignmentId: number, st
       disciplineId: subject[0].id,
       studentId: student.id,
       label: detail.title,
-      value: score,
+      value: null,
+      points: String(score),
       kind: "current",
       awardedOn: moscowToday(),
     }).returning({ id: marks.id });
@@ -387,7 +388,7 @@ export async function journal(user: PublicUser, groupName: string, discipline: s
       const subject = subjectRows.find((row) => row.studentId === student.id);
       return {
         name: student.fullName,
-        marks: markRows.filter((row) => row.disciplineId === subject?.id).map((row) => ({ label: row.label, value: row.value })),
+        marks: markRows.filter((row) => row.disciplineId === subject?.id).map((row) => ({ label: row.label, value: row.points != null ? Number(row.points) : null })),
         attendance: visits.filter((row) => row.studentId === student.id).map((row) => ({ date: row.lessonDate, present: row.present })),
       };
     }),

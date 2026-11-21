@@ -1,5 +1,6 @@
 import { daysBetween } from "./dates";
 import type { DisciplineView } from "./domain";
+import { DEFAULT_THRESHOLDS, finalByPercent, formatPercent, pointsTotal } from "./journal";
 
 export type Risk = "low" | "medium" | "high";
 export type Automatic = "5" | "4" | "pass" | null;
@@ -22,24 +23,20 @@ export interface NavigatorItem {
   daysLeft: number | null;
 }
 
-const AUTO5 = 4.75;
-const AUTO4 = 4.2;
-const AUTOPASS = 3;
-
 export function formatMark(n: number): string {
   return n.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
-export function analyzeDiscipline(d: DisciplineView, todayISO: string): NavigatorItem {
-  const currentValues = d.marks
-    .filter((m) => m.kind === "current" && m.value != null && m.value >= 2)
-    .map((m) => m.value as number);
-  const average = currentValues.length
-    ? currentValues.reduce((a, b) => a + b, 0) / currentValues.length
-    : null;
-  const min = currentValues.length ? Math.min(...currentValues) : null;
-  const exam = d.marks.find((m) => m.kind === "exam" && m.value != null);
-  const credit = d.marks.find((m) => m.kind === "credit" && m.value != null);
+export function analyzeDiscipline(d: DisciplineView, todayISO: string, thresholds = DEFAULT_THRESHOLDS): NavigatorItem {
+  const scored = d.marks
+    .filter((mark) => mark.points != null)
+    .map((mark) => ({ points: Number(mark.points), maxPoints: mark.maxPoints ?? 10, weight: mark.weight ?? 1, label: mark.label }));
+  const total = pointsTotal(scored, thresholds);
+  const average = total.percent;
+  const currentValues = scored.map((mark) => Math.round((mark.points / mark.maxPoints) * 1000) / 10);
+  const low = scored.filter((mark) => (mark.points / mark.maxPoints) * 100 < thresholds.satisfactory);
+  const exam = d.marks.find((m) => m.kind === "exam" && m.points != null);
+  const credit = d.marks.find((m) => m.kind === "credit" && m.points != null);
   const allObl = d.obligatoryDone >= d.obligatoryTotal;
   const daysLeft = d.sessionDate ? daysBetween(todayISO, d.sessionDate) : null;
   const remaining = Math.max(0, d.obligatoryTotal - d.obligatoryDone);
@@ -50,44 +47,45 @@ export function analyzeDiscipline(d: DisciplineView, todayISO: string): Navigato
   const details: string[] = [];
   let headline = "";
 
-  if (d.controlForm === "exam" && exam?.value != null) {
-    finalText = String(exam.value);
-    risk = exam.value <= 2 ? "high" : "low";
-    headline =
-      exam.value <= 2
-        ? `${d.name}: экзамен не сдан, это задолженность.`
-        : `${d.name}: экзамен уже стоит — ${exam.value}.`;
-    details.push("Автомат считается только до экзамена. Итог в ведомости — оценка экзамена.");
-  } else if (d.controlForm === "credit" && credit?.value != null) {
-    const passed = credit.value >= 1;
+  if (d.controlForm === "exam" && exam?.points != null) {
+    const ratio = (exam.points / (exam.maxPoints ?? 10)) * 100;
+    finalText = finalByPercent(ratio, thresholds);
+    risk = ratio < thresholds.satisfactory ? "high" : "low";
+    headline = ratio < thresholds.satisfactory
+      ? `${d.name}: экзамен ниже ${thresholds.satisfactory}%, это задолженность.`
+      : `${d.name}: экзамен уже стоит — ${formatPercent(ratio)}.`;
+    details.push("Итог считается по баллам и порогам предмета.");
+  } else if (d.controlForm === "credit" && credit?.points != null) {
+    const ratio = (credit.points / (credit.maxPoints ?? 10)) * 100;
+    const passed = ratio >= thresholds.satisfactory;
     finalText = passed ? "зачтено" : "незачёт";
     risk = passed ? "low" : "high";
     headline = passed ? `${d.name}: зачёт уже стоит.` : `${d.name}: незачёт, это задолженность.`;
   } else {
-    const blockedByTwo = min != null && min <= 2;
+    const blocked = low.length > 0;
     if (d.controlForm === "exam") {
-      if (allObl && average != null && average >= AUTO5 && min != null && min >= 4) automatic = "5";
-      else if (allObl && average != null && average >= AUTO4 && min != null && min >= 3) automatic = "4";
-    } else if (allObl && average != null && average >= AUTOPASS && min != null && min >= 3) {
+      if (allObl && average != null && average >= thresholds.excellent && !blocked) automatic = "5";
+      else if (allObl && average != null && average >= thresholds.good && !blocked) automatic = "4";
+    } else if (allObl && average != null && average >= thresholds.satisfactory && !blocked) {
       automatic = "pass";
     }
 
-    if (blockedByTwo || (average != null && average < 3) || (daysLeft != null && daysLeft < 0)) risk = "high";
+    if (blocked || (average != null && average < thresholds.satisfactory) || (daysLeft != null && daysLeft < 0)) risk = "high";
     else if (!allObl && daysLeft != null && daysLeft <= 7) risk = "high";
     else if (!automatic) risk = "medium";
     else risk = "low";
 
     if (average == null && (daysLeft == null || daysLeft > 7)) risk = "medium";
 
-    const avgText = average == null ? "текущих оценок нет" : `среднее ${formatMark(average)}`;
-    if (automatic === "5") headline = `${d.name}: доступен автомат «отлично». ${capitalize(avgText)}.`;
-    else if (automatic === "4") headline = `${d.name}: доступен автомат «хорошо». ${capitalize(avgText)}.`;
-    else if (automatic === "pass") headline = `${d.name}: зачёт можно поставить автоматом. ${capitalize(avgText)}.`;
-    else if (blockedByTwo) headline = `${d.name}: автомат закрыт, пока в текущих есть оценка 2.`;
-    else if (d.controlForm === "exam") headline = `${d.name}: экзамен нужен. ${capitalize(avgText)}.`;
-    else headline = `${d.name}: зачёт пока не закрыт. ${capitalize(avgText)}.`;
+    const avgText = average == null ? "баллов пока нет" : formatPercent(average);
+    if (automatic === "5") headline = `${d.name}: по баллам выходит «отлично». ${avgText}.`;
+    else if (automatic === "4") headline = `${d.name}: по баллам выходит «хорошо». ${avgText}.`;
+    else if (automatic === "pass") headline = `${d.name}: зачёт закрывается баллами. ${avgText}.`;
+    else if (blocked) headline = `${d.name}: есть работы ниже ${thresholds.satisfactory}%. Итог ${avgText}.`;
+    else if (d.controlForm === "exam") headline = `${d.name}: итог ещё открыт. ${avgText}.`;
+    else headline = `${d.name}: зачёт пока не закрыт. ${avgText}.`;
 
-    if (currentValues.length) details.push(`Текущие оценки: ${currentValues.join(", ")}.`);
+    if (scored.length) details.push(`Баллы: ${scored.map((mark) => `${mark.points}/${mark.maxPoints}`).join(", ")}.`);
     if (d.obligatoryTotal) {
       details.push(`Обязательные работы: ${d.obligatoryDone} из ${d.obligatoryTotal}.`);
     }
@@ -102,33 +100,27 @@ export function analyzeDiscipline(d: DisciplineView, todayISO: string): Navigato
               : `через ${daysLeft} дн.`;
       details.push(`Аттестация ${d.sessionDate}${when ? ` (${when})` : ""}.`.replace(d.sessionDate, formatSession(d.sessionDate)));
     }
-    if (blockedByTwo) {
-      details.push("Пересдайте работу с оценкой 2 минимум на 3 — иначе автомат не откроется.");
+    if (blocked) {
+      details.push(`Есть работы ниже ${thresholds.satisfactory}%: ${low.map((mark) => mark.label).join(", ")}.`);
     }
-    if (remaining === 1 && !blockedByTwo && average != null) {
-      const for5 = nextMark(currentValues, AUTO5, 4);
-      const for4 = nextMark(currentValues, AUTO4, 3);
-      const forPass = nextMark(currentValues, AUTOPASS, 3);
+    if (remaining === 1 && !blocked && average != null) {
       if (d.controlForm === "exam") {
-        if (for5.already) details.push("По среднему автомат «отлично» уже набирается — закройте последнюю работу оценкой не ниже 4.");
-        else if (for5.mark) details.push(`Для автомата «отлично» последняя обязательная работа должна быть не ниже ${for5.mark}.`);
-        else details.push("Одной работой до автомата «отлично» уже не дотянуть.");
-        if (!for4.already && for4.mark) details.push(`Для автомата «хорошо» достаточно оценки не ниже ${for4.mark}.`);
-        else if (for4.already) details.push("Для автомата «хорошо» хватит закрыть работу без оценки ниже 3.");
-      } else if (forPass.mark) {
-        details.push(`Чтобы получить зачёт автоматом, закройте работу оценкой не ниже ${forPass.mark}.`);
+        if (average >= thresholds.excellent) details.push(`Для «отлично» (${thresholds.excellent}%) уже хватает — закройте последнюю работу не ниже ${thresholds.good}%.`);
+        else details.push(`Для «отлично» нужно дотянуть итог до ${thresholds.excellent}%, для «хорошо» — до ${thresholds.good}%.`);
+      } else {
+        details.push(`Чтобы закрыть зачёт, держите итог не ниже ${thresholds.satisfactory}%.`);
       }
     } else if (remaining > 1) {
-      details.push(`Автомат посчитаем после оставшихся работ: ещё ${remaining}.`);
-    } else if (remaining === 0 && !automatic && !blockedByTwo && d.controlForm === "exam") {
-      details.push("Порог автомата не взят. На экзамене 5 — это пятёрка, 4 — четвёрка, не ниже 3 — без задолженности.");
-      if (average != null && average < AUTO5) {
-        details.push(`До автомата «отлично» не хватает среднего ${formatMark(AUTO5)} (сейчас ${formatMark(average)}).`);
+      details.push(`Итог посчитаем после оставшихся работ: ещё ${remaining}.`);
+    } else if (remaining === 0 && !automatic && !blocked && d.controlForm === "exam") {
+      details.push(`Порог «отлично» — ${thresholds.excellent}%, «хорошо» — ${thresholds.good}%, «удовлетворительно» — ${thresholds.satisfactory}%.`);
+      if (average != null && average < thresholds.excellent) {
+        details.push(`До «отлично» не хватает ${formatPercent(thresholds.excellent)} (сейчас ${formatPercent(average)}).`);
       }
     }
-    if (automatic === "5") details.push("На экзамен можно не приходить: в ведомость поставят 5.");
-    if (automatic === "4") details.push("Автомат «хорошо» уже можно зафиксировать. Пятёрка — только если среднее дорастёт до 4,75 и не будет оценок ниже 4.");
-    if (automatic === "pass") details.push("Зачёт закроется без явки, когда учебный офис проставит его в ведомость.");
+    if (automatic === "5") details.push("По баллам выходит «отлично».");
+    if (automatic === "4") details.push("По баллам выходит «хорошо». «Отлично» — если итог дорастёт до порога и не будет работ ниже него.");
+    if (automatic === "pass") details.push("Зачёт закрывается накопленными баллами.");
   }
 
   return {
@@ -153,17 +145,17 @@ export function analyzeDiscipline(d: DisciplineView, todayISO: string): Navigato
 export function analyzeSession(list: DisciplineView[], todayISO: string): NavigatorItem[] {
   const rank = { high: 0, medium: 1, low: 2 };
   return list
-    .map((d) => analyzeDiscipline(d, todayISO))
+    .map((d) => analyzeDiscipline(d, todayISO, d.thresholds))
     .sort((a, b) => rank[a.risk] - rank[b.risk] || (a.daysLeft ?? 99) - (b.daysLeft ?? 99));
 }
 
-export function withHypothetical(d: DisciplineView, value: number): DisciplineView {
+export function withHypothetical(d: DisciplineView, points: number, maxPoints = 10): DisciplineView {
   return {
     ...d,
     obligatoryDone: Math.min(d.obligatoryTotal, d.obligatoryDone + (d.obligatoryDone < d.obligatoryTotal ? 1 : 0)),
     marks: [
       ...d.marks,
-      { id: -1, label: "Предположение", value, kind: "current", awardedOn: null },
+      { id: -1, label: "Предположение", value: null, points, maxPoints, weight: 1, kind: "current", awardedOn: null },
     ],
   };
 }

@@ -16,7 +16,8 @@
 @tailwind utilities;
 
 :root {
-  --mobile-chrome: calc(9rem + env(safe-area-inset-bottom));
+  --mobile-chrome: calc(7.75rem + env(safe-area-inset-bottom));
+  --surface-solid: #f7fffb;
   --bg: #e6fff5;
   --ink: #10241c;
   --muted: #3c5248;
@@ -36,6 +37,7 @@
 }
 
 .dark {
+  --surface-solid: #121a30;
   --bg: #080c18;
   --ink: #eef1ff;
   --muted: #c5cde4;

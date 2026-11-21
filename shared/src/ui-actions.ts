@@ -38,6 +38,15 @@ export const UI_ACTIONS: UiAction[] = [
   { id: "teach-issue", label: "Выдать задание", roles: ["teacher"], tool: "teacher_issue_assignment", to: "/teach/assign" },
   { id: "staff-publish", label: "Опубликовать объявление", roles: ["staff"], tool: "staff_publish_announcement" },
   { id: "teach-grade", label: "Оценить работу", roles: ["teacher"], tool: "teacher_grade_homework" },
+  { id: "journal-cell", label: "Ячейка журнала", roles: ["teacher"], tool: "teacher_set_mark" },
+  { id: "journal-save", label: "Сохранить оценку", roles: ["teacher"], tool: "teacher_set_mark" },
+  { id: "journal-clear", label: "Очистить оценку", roles: ["teacher"], tool: "teacher_clear_mark" },
+  { id: "journal-column", label: "Колонка журнала", roles: ["teacher"], tool: "teacher_add_journal_column" },
+  { id: "journal-add-column", label: "Добавить колонку", roles: ["teacher"], tool: "teacher_add_journal_column" },
+  { id: "journal-topic", label: "Тема пары", roles: ["teacher"], tool: "teacher_set_topic" },
+  { id: "journal-period", label: "Период журнала", roles: ["teacher"] },
+  { id: "grades-period", label: "Период оценок", roles: ["student"], tool: "get_grades" },
+  { id: "grades-view", label: "Вид оценок", roles: ["student"], tool: "get_grades" },
   { id: "teach-return", label: "Вернуть работу", roles: ["teacher"], tool: "teacher_return_homework" },
 ];
 

@@ -175,6 +175,9 @@ export interface MarkView {
   value: number | null;
   kind: MarkKind;
   awardedOn: string | null;
+  points?: number | null;
+  maxPoints?: number;
+  weight?: number;
 }
 
 export interface DisciplineView {
@@ -186,6 +189,7 @@ export interface DisciplineView {
   obligatoryDone: number;
   semester: string;
   marks: MarkView[];
+  thresholds?: { excellent: number; good: number; satisfactory: number };
 }
 
 export type UiDirective =
@@ -223,6 +227,12 @@ export type UndoPayload =
   | { type: "reminder"; id: number }
   | { type: "flag"; scheduleItemId: number; flagged: boolean }
   | { type: "mark"; markId: number }
+  | { type: "mark_cell"; markId: number; created: boolean; prev: { value: number | null; points?: number | null; comment: string | null; label: string; kind: string; awardedOn: string | null } | null; createdColumnId?: number | null; notice?: { id: number; previousBody: string | null } | null }
+  | { type: "mark_restore"; row: { studentId: number; disciplineId: number; columnId: number | null; label: string; value: number | null; kind: string; awardedOn: string | null; comment: string | null; teacherId: number | null } }
+  | { type: "journal_column"; column: Record<string, unknown>; marks: Record<string, unknown>[] }
+  | { type: "topic"; groupName: string; discipline: string; date: string; topic: string | null }
+  | { type: "attendance"; studentId: number; groupName: string; discipline: string; date: string; present: boolean | null; status: string | null }
+  | { type: "grading"; groupName: string; discipline: string; previous: { defaults: Record<string, { maxPoints: number; weight: number }>; excellent: number; good: number; satisfactory: number } | null }
   | { type: "submission"; submissionId: number; previousStatus: string; previousScore: number | null; previousComment: string | null; markId: number | null };
 
 export interface ToolCall {

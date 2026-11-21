@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { DisciplineView } from "@shared/domain";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { formatPercent, formatScore, monthBounds, semesterBounds } from "@shared/journal";
 import { api } from "../lib/api";
 import { Choice, EmptyState, ErrorState, Glass, LoadingBlock, Pill } from "../components/ui";
 
@@ -65,14 +66,13 @@ function Ring({ value, max }: { value: number; max: number }) {
   );
 }
 
-function ruNumber(value: number) {
-  return value.toLocaleString("ru-RU", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-}
-
 export function GradesPage() {
   const [params, setParams] = useSearchParams();
   const semester = params.get("semester") ?? "";
   const subject = params.get("subject") ?? "";
+  const view = params.get("view") ?? "table";
+  const from = params.get("from") ?? "";
+  const to = params.get("to") ?? "";
   const [opened, setOpened] = useState<number | null>(null);
   const grades = useQuery({
     queryKey: ["grades", semester],
@@ -82,16 +82,27 @@ export function GradesPage() {
   if (grades.isLoading) return <LoadingBlock />;
   if (grades.error || !grades.data) return <ErrorState text="Оценки не загрузились" onRetry={() => void grades.refetch()} />;
 
-  const average = grades.data.items.reduce((sum, item) => sum + (item.average ?? 0), 0) / Math.max(grades.data.items.filter((item) => item.average != null).length, 1);
+  const scored = grades.data.items.filter((item) => item.average != null);
+  const average = scored.length ? scored.reduce((sum, item) => sum + (item.average ?? 0), 0) / scored.length : null;
   const high = grades.data.items.filter((item) => item.risk === "high").length;
   const autos = grades.data.items.filter((item) => item.automatic && !item.finalText).length;
   return (
     <div className="space-y-4" data-agent-target="grades">
       <div className="min-w-0">
         <h1>Успеваемость</h1>
-        <p className="text-sm text-[var(--muted)]">Как идёт сессия и что нужно для автомата.</p>
+        <p className="text-sm text-[var(--muted)]">Баллы, процент и пороги предмета.</p>
       </div>
-      <Choice label="Семестр" value={grades.data.semester} options={grades.data.semesters.map((item) => ({ value: item.id, label: item.label }))} onChange={(value) => setParams({ semester: value })} />
+      <Choice label="Семестр" value={grades.data.semester} options={grades.data.semesters.map((item) => ({ value: item.id, label: item.label }))} onChange={(value) => setParams({ semester: value, view })} />
+      <div className="flex flex-wrap gap-2" data-agent-action="grades-view">
+        {[["table", "Таблица"], ["list", "Список"], ["summary", "Сводка"]].map(([id, label]) => (
+          <button key={id} type="button" className={`btn h-11 px-3 ${view === id ? "btn-primary" : "btn-quiet"}`} onClick={() => setParams({ semester: grades.data!.semester, view: id, subject })}>{label}</button>
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-2" data-agent-action="grades-period">
+        <button type="button" className="btn btn-quiet h-11 px-3" onClick={() => { const month = monthBounds(); setParams({ semester: grades.data!.semester, view, subject, from: month.from, to: month.to }); }}>Месяц</button>
+        <button type="button" className="btn btn-quiet h-11 px-3" onClick={() => { const term = semesterBounds(); setParams({ semester: grades.data!.semester, view, subject, from: term.from, to: term.to }); }}>Семестр</button>
+      </div>
+      {view === "summary" ? null : <GradeTable mode={view === "list" ? "list" : "table"} semester={grades.data.semester} from={from} to={to} subject={subject} focus={params.get("focus") ?? ""} />}
       <div className="chip-row -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
         <button type="button" className="btn btn-quiet h-11 shrink-0 px-3" data-agent-action="grades-open" onClick={() => setParams({ semester: grades.data!.semester })}>Все</button>
         {grades.data.items.map((item) => (
@@ -99,7 +110,7 @@ export function GradesPage() {
         ))}
       </div>
       <GradeMeters average={average} high={high} autos={autos} total={Math.max(grades.data.items.length, 1)} />
-      {grades.data.items.length === 0 ? (
+      {view !== "summary" ? null : grades.data.items.length === 0 ? (
         <EmptyState title="Нет данных" text="За выбранный период оценок нет." />
       ) : (
         <div className="stagger space-y-4">{grades.data.items.map((item) => {
@@ -110,9 +121,9 @@ export function GradesPage() {
               <button type="button" className="flex min-h-11 w-full items-center justify-between gap-2 text-left" aria-expanded={expanded} onClick={() => setOpened(expanded ? null : item.id)}>
                 <div className="min-w-0">
                   <h2 className="truncate text-base font-semibold">{item.name}</h2>
-                  <p className="text-sm text-[var(--muted)]">{item.average == null ? "Средний —" : `Средний ${new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(item.average)}`} · {item.controlForm === "exam" ? "экзамен" : "зачёт"}</p>
+                  <p className="text-sm text-[var(--muted)]">{item.average == null ? "Баллов нет" : formatPercent(item.average)} · {item.controlForm === "exam" ? "экзамен" : "зачёт"}</p>
                 </div>
-                <Pill tone={item.risk === "high" ? "high" : item.risk === "medium" ? "mid" : "low"}>{item.risk === "high" ? "Риск" : item.automatic && !item.finalText ? `Автомат ${item.automatic === "pass" ? "зачёт" : item.automatic}` : item.risk === "medium" ? "В работе" : "Спокойно"}</Pill>
+                <Pill tone={item.risk === "high" ? "high" : item.risk === "medium" ? "mid" : "low"}>{item.risk === "high" ? "Риск" : item.automatic && !item.finalText ? (item.automatic === "5" ? "Отлично" : item.automatic === "4" ? "Хорошо" : "Зачёт") : item.risk === "medium" ? "В работе" : "Спокойно"}</Pill>
               </button>
               <div className={`grid transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
                 <div className="overflow-hidden">
@@ -127,14 +138,14 @@ export function GradesPage() {
                       {discipline.marks.map((mark) => (
                         <span key={mark.id} className="rounded-2xl bg-white/50 px-3 py-2 text-sm dark:bg-white/5">
                           <span className="block text-[11px] text-[var(--muted)]">{mark.label}</span>
-                          <span className="font-semibold">{mark.kind === "credit" ? (mark.value ? "зачтено" : "незачёт") : mark.value}</span>
+                          <span className="font-semibold">{mark.points == null ? "—" : `${mark.points}/${mark.maxPoints ?? 10}`}</span>
                         </span>
                       ))}
                     </div>
                   ) : null}
                   {item.average != null ? (
                     <div className="mt-3 h-2 rounded-full bg-black/10">
-                      <div className="h-full rounded-full" style={{ width: `${Math.min(100, ((item.average - 2) / 3) * 100)}%`, background: "var(--brand)" }} />
+                      <div className="h-full rounded-full" style={{ width: `${Math.min(100, item.average)}%`, background: "var(--brand)" }} />
                     </div>
                   ) : null}
                 </div>
@@ -147,13 +158,93 @@ export function GradesPage() {
   );
 }
 
-function GradeMeters({ average, high, autos, total }: { average: number; high: number; autos: number; total: number }) {
-  const shown = useCount(Number.isFinite(average) ? average : 0);
+function GradeTable({ semester, from, to, subject, focus, mode }: { semester: string; from: string; to: string; subject: string; focus: string; mode: "table" | "list" }) {
+  const table = useQuery({
+    queryKey: ["grades-table", semester, from, to],
+    queryFn: () => api<{ period: { label: string; final: boolean }; dates: string[]; rows: { discipline: string; weighted: number | null; percent: number | null; earned: number; possible: number; grade: string | null; automatic: string | null; finalText: string | null; cells: { date: string; markId: number; value: number | null; points: number | null; short: string; title: string; comment: string | null; teacher: string | null; weight: number; maxPoints: number }[] }[] }>(`/api/grades/table?semester=${encodeURIComponent(semester)}${from ? `&from=${from}&to=${to}` : ""}`),
+  });
+  const [open, setOpen] = useState<{ id: number; top: number; left: number } | null>(null);
+  if (table.isLoading) return <LoadingBlock />;
+  if (table.error || !table.data) return <ErrorState text="Таблица не загрузилась" />;
+  const final = table.data.period?.final !== false;
+  const rows = table.data.rows.filter((row) => !subject || row.discipline === subject);
+  if (mode === "list") {
+    const cells = rows.flatMap((row) => row.cells.map((cell) => ({ ...cell, discipline: row.discipline }))).sort((a, b) => b.date.localeCompare(a.date));
+    return <ul className="space-y-2">{cells.map((cell) => <li key={cell.markId} className="rounded-2xl bg-[var(--surface-solid)] px-3 py-2 text-sm">{cell.date.slice(8, 10)}.{cell.date.slice(5, 7)} · {cell.discipline} · {cell.title} · {cell.points == null && cell.value == null ? "—" : `${cell.points ?? cell.value}/${cell.maxPoints ?? 10}`}{cell.comment ? ` · ${cell.comment}` : ""}</li>)}</ul>;
+  }
+  return (
+    <>
+    {final ? null : <p className="text-sm text-[var(--muted)]">За {table.data.period.label}. Это не итог семестра.</p>}
+    <div className="max-w-full overflow-x-auto" data-scroll-x>
+      <table className="min-w-max border-separate border-spacing-0 text-sm">
+        <thead>
+          <tr>
+            <th className="sticky left-0 z-10 bg-[var(--surface-solid)] px-2 py-2 text-left">Предмет</th>
+            {table.data.dates.map((date) => <th key={date} className="min-w-14 whitespace-nowrap px-2 py-2">{date.slice(8, 10)}.{date.slice(5, 7)}</th>)}
+            <th className="sticky right-0 w-16 bg-[var(--surface-solid)] px-1 text-center">%</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.discipline}>
+              <th className="sticky left-0 z-10 w-28 bg-[var(--surface-solid)] px-2 py-2 text-left md:w-36" scope="row">{row.discipline}{row.percent != null ? <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-black/10"><span className="block h-full" style={{ width: `${Math.min(100, row.percent)}%`, background: "var(--brand)" }} /></span> : null}<span className="block text-[10px] font-normal text-[var(--muted)]" title="Взвешенные баллы: доля совпадает с процентом">{row.percent == null ? "—" : `${formatPercent(row.percent)} · ${formatScore(row.earned)} из ${row.possible}${final && row.grade ? ` · ${row.grade}` : ""}`}</span></th>
+              {table.data!.dates.map((date) => {
+                const cells = row.cells.filter((cell) => cell.date === date);
+                return <td key={date} className="px-1">{cells.map((cell) => <button key={cell.markId} type="button" data-agent-target={`grade-${cell.markId}`} className={`m-0.5 rounded-full px-2 py-1 text-xs font-semibold ${cell.markId === Number(focus) ? "ring-2 ring-[var(--primary)]" : ""} ${markTone(cell.points == null ? null : (Number(cell.points) / (cell.maxPoints || 10)) * 100)}`} onClick={(event) => setOpen({ id: cell.markId, top: event.currentTarget.getBoundingClientRect().bottom + 8, left: event.currentTarget.getBoundingClientRect().left })}>{cell.points == null ? "—" : `${cell.points}/${cell.maxPoints ?? 10}`}</button>)}</td>;
+              })}
+              <td className="sticky right-0 w-16 bg-[var(--surface-solid)] px-1 text-center text-xs"><span className="block whitespace-nowrap">{formatPercent(row.percent)}</span><span className="block">{final ? (row.grade || outcomeLabel(row.automatic, row.finalText)) : "—"}</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    {open ? <GradePopover cell={rows.flatMap((row) => row.cells.map((item) => ({ ...item, discipline: row.discipline }))).find((item) => item.markId === open.id)} top={open.top} left={open.left} onClose={() => setOpen(null)} /> : null}
+    </>
+  );
+}
+
+function markTone(percent: number | null) {
+  if (percent == null) return "bg-slate-200 text-slate-900";
+  if (percent >= 85) return "bg-emerald-200 text-emerald-950";
+  if (percent >= 70) return "bg-sky-200 text-sky-950";
+  if (percent >= 55) return "bg-amber-200 text-amber-950";
+  return "bg-rose-200 text-rose-950";
+}
+
+function outcomeLabel(automatic: string | null, finalText: string | null) {
+  if (finalText) return finalText;
+  if (automatic === "5") return "отлично";
+  if (automatic === "4") return "хорошо";
+  if (automatic === "pass") return "зачёт";
+  if (automatic === "fail") return "незачёт";
+  return "—";
+}
+
+function GradePopover({ cell, top, left, onClose }: { cell?: { date: string; title: string; short: string; weight: number; maxPoints?: number; points?: number | null; comment: string | null; teacher: string | null; discipline: string; value: number | null }; top: number; left: number; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  if (!cell) return null;
+  const wide = typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches;
+  return (
+    <div role="dialog" aria-label="Оценка" className="fixed z-[70] w-[min(22rem,calc(100%-1.5rem))] rounded-3xl bg-[var(--surface-solid)] p-4 text-sm shadow-2xl" style={wide ? { top: Math.min(top, window.innerHeight - 220), left: Math.max(12, Math.min(left, window.innerWidth - 360)) } : { left: 12, right: 12, bottom: "calc(7.75rem + env(safe-area-inset-bottom))", width: "auto" }}>
+      <p className="font-semibold">{cell.date.slice(8, 10)}.{cell.date.slice(5, 7)} · {cell.discipline}</p>
+      <p className="mt-1">{cell.short} · {cell.title} · {cell.points ?? cell.value}/{cell.maxPoints ?? 10} · вес {cell.weight}</p>
+      <p className="mt-1 text-[var(--muted)]">{cell.teacher || "—"}{cell.comment ? ` · ${cell.comment}` : ""}</p>
+      <button type="button" className="btn btn-quiet mt-3 h-11 px-3" onClick={onClose}>Закрыть</button>
+    </div>
+  );
+}
+
+function GradeMeters({ average, high, autos, total }: { average: number | null; high: number; autos: number; total: number }) {
+  const shown = useCount(average ?? 0);
   const risk = useCount(high);
   const auto = useCount(autos);
   return (
     <div className="grid grid-cols-3 gap-2">
-      <Glass className="p-0"><div className="glass-pad flex flex-col items-center px-2 py-3 text-center"><Ring value={shown} max={5} /><p className="text-xs text-[var(--muted)]">Средний</p><p className="text-2xl font-bold">{ruNumber(shown)}</p></div></Glass>
+      <Glass className="p-0"><div className="glass-pad flex flex-col items-center px-2 py-3 text-center"><Ring value={average == null ? 0 : shown} max={100} /><p className="text-xs text-[var(--muted)]">Баллы</p><p className="text-2xl font-bold">{average == null ? "—" : formatPercent(shown)}</p></div></Glass>
       <Glass><div className="glass-pad flex flex-col items-center px-2 py-3 text-center"><Ring value={risk} max={total} /><p className="text-xs text-[var(--muted)]">Риск</p><p className="text-2xl font-bold">{Math.round(risk)}</p></div></Glass>
       <Glass><div className="glass-pad flex flex-col items-center px-2 py-3 text-center"><Ring value={auto} max={total} /><p className="text-xs text-[var(--muted)]">Автомат</p><p className="text-2xl font-bold">{Math.round(auto)}</p></div></Glass>
     </div>

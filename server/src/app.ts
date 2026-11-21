@@ -9,6 +9,7 @@ import Fastify, { type FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
 import { moscowToday, resolveWhen } from "../../shared/src/dates";
 import { CONTEST_NOTE, kindMeta, UNIVERSITY, type PublicUser } from "../../shared/src/domain";
+import { marksForTerm, semesterBounds } from "../../shared/src/journal";
 import { analyzeSession } from "../../shared/src/navigator";
 import { hashPassword, randomToken, sessionHash, verifyPassword } from "./auth/crypto";
 import { clarifyChoice, confirmPending, perform, rejectPending, runTurn, studentBrief } from "./actions";
@@ -33,7 +34,8 @@ import {
   toPublic,
 } from "./loaders";
 import { renderCertificate } from "./pdf";
-import { getStudentHomework, getTeacherAssignment, listStudentHomework, teacherHome, teacherQueue, journal } from "./homework";
+import { getStudentHomework, getTeacherAssignment, listStudentHomework, teacherHome, teacherQueue } from "./homework";
+import { loadJournal, studentTable } from "./journal";
 import { triageRequest } from "./triage";
 import type { RequestStatus } from "../../shared/src/domain";
 import { STATUS_LABEL } from "../../shared/src/domain";
@@ -266,7 +268,8 @@ export async function buildApp() {
       const semesters = semestersFor(today);
       const query = request.query as { semester?: string };
       const semester = query.semester || semesters.current.id;
-      const list = await loadDisciplines(user.id, semester);
+      const term = semesterBounds(today);
+      const list = (await loadDisciplines(user.id, semester)).map((item) => ({ ...item, marks: marksForTerm(item.marks, term.from, term.to) }));
       return { semester, semesters: semesters.list, today, items: analyzeSession(list, today), disciplines: list };
     });
 
@@ -405,9 +408,20 @@ export async function buildApp() {
     scope.get("/api/teach/homework", async (request) => ({ queue: await teacherQueue(request.user!) }));
     scope.get("/api/teach/homework/:id", async (request) => ({ assignment: await getTeacherAssignment(request.user!, Number((request.params as { id: string }).id)) }));
     scope.get("/api/teach/journal", async (request) => {
-      const query = request.query as { group?: string; discipline?: string };
+      if (request.user!.role !== "teacher") throw new HttpError(403, "forbidden", "Недостаточно прав");
+      const query = request.query as { group?: string; discipline?: string; from?: string; to?: string };
       if (!query.group || !query.discipline) throw new HttpError(400, "bad_request", "Нужны группа и предмет");
-      return journal(request.user!, query.group, query.discipline);
+      return loadJournal(request.user!, query.group, query.discipline, query.from, query.to);
+    });
+    scope.get("/api/staff/journal", async (request) => {
+      if (request.user!.role !== "staff") throw new HttpError(403, "forbidden", "Недостаточно прав");
+      const query = request.query as { group?: string; discipline?: string; from?: string; to?: string };
+      if (!query.group || !query.discipline) throw new HttpError(400, "bad_request", "Нужны группа и предмет");
+      return loadJournal(request.user!, query.group, query.discipline, query.from, query.to);
+    });
+    scope.get("/api/grades/table", async (request) => {
+      const query = request.query as { from?: string; to?: string; semester?: string };
+      return studentTable(request.user!, query.from, query.to, query.semester);
     });
 
     scope.get("/api/staff/requests", async (request) => {

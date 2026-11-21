@@ -181,11 +181,13 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
       });
       if (!abort.signal.aborted) await play(response.ui?.filter((item) => item.type !== "navigate"), response.steps, Boolean(navigateTo));
       setOperator(null);
+      delete document.body.dataset.operator;
       window.dispatchEvent(new CustomEvent("altair-cursor", { detail: { on: false, x: 0, y: 0 } }));
       if (abort.signal.aborted) {
         if (response.confirm) {
           await api("/api/agent/reject", { method: "POST", body: JSON.stringify({ pendingId: response.confirm.pendingId }) }).catch(() => undefined);
         }
+        window.dispatchEvent(new CustomEvent("altair-close-cell"));
         toast("Остановлено");
         setPeekLine("Остановлено");
         setPeek(true);
@@ -211,6 +213,7 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
         },
       ]);
       if (!wide) {
+        setPeekLine(response.confirm ? "Жду подтверждение…" : say);
         setPeek(false);
         setOpen(true);
       }
@@ -236,6 +239,32 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
       });
       const navigateTo = response.ui?.find((item) => item.type === "navigate");
       const wide = window.matchMedia("(min-width: 768px)").matches;
+      const abort = new AbortController();
+      abortRef.current = abort;
+      const tools = (response.steps ?? []).flatMap((step) => (step.tool ? [step.tool] : []));
+      if (!wide) {
+        setPeekLine("Открываю журнал…");
+        setPeek(true);
+      }
+      await playTurn({
+        tools: tools.length ? tools : ["teacher_set_mark"],
+        open: response.open ?? navigateTo?.to,
+        fields: response.confirm?.fields ?? [],
+        fill: response.fill,
+        navigate,
+        signal: abort.signal,
+        onStep: (label) => {
+          setOperator(label);
+          if (!wide) setPeekLine(label);
+        },
+      });
+      setOperator(null);
+      delete document.body.dataset.operator;
+      if (abort.signal.aborted) {
+        window.dispatchEvent(new CustomEvent("altair-close-cell"));
+        if (response.confirm) await api("/api/agent/reject", { method: "POST", body: JSON.stringify({ pendingId: response.confirm.pendingId }) }).catch(() => undefined);
+        return;
+      }
       setMessages((current) => [
         ...current,
         {
@@ -250,11 +279,12 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
           undo: response.undo,
         },
       ]);
-      if (navigateTo && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-        await new Promise((resolve) => window.setTimeout(resolve, 420));
-      }
-      await play(response.ui, [], Boolean(navigateTo));
-      if (navigateTo && !wide) {
+      await play(response.ui?.filter((item) => item.type !== "navigate"), [], false);
+      if (!wide && response.confirm) {
+        setPeekLine("Жду подтверждение…");
+        setPeek(false);
+        setOpen(true);
+      } else if (navigateTo && !wide) {
         setPeekLine(specificPeek(navigateTo.to, response.say));
         setPeek(true);
       }
@@ -298,6 +328,7 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
   };
 
   const reject = async (pendingId: string) => {
+    window.dispatchEvent(new CustomEvent("altair-close-cell"));
     await api("/api/agent/reject", { method: "POST", body: JSON.stringify({ pendingId }) }).catch(() => undefined);
     setMessages((current) => current.map((item) => (item.confirm?.pendingId === pendingId ? { ...item, confirm: undefined, text: `${item.text}\n\nПодтверждение отменено.` } : item)));
   };
@@ -379,6 +410,7 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
     stop: () => {
       abortRef.current?.abort();
       setOperator(null);
+      delete document.body.dataset.operator;
       window.dispatchEvent(new CustomEvent("altair-cursor", { detail: { on: false, x: 0, y: 0 } }));
     },
   };

@@ -12,6 +12,7 @@ import { NewRequestPage, RequestPage, RequestsPage } from "./pages/requests";
 import { HomeworkDetail, HomeworkPage } from "./pages/homework";
 import { SchedulePage } from "./pages/schedule";
 import { TeachAnnounce, TeachAssignment, TeachHome, TeachIssue, TeachJournal, TeachQueue } from "./pages/teach";
+import { JournalScreen } from "./components/journal/JournalScreen";
 
 function RequireAuth() {
   const { user, loading } = useAuth();
@@ -48,6 +49,7 @@ export function App() {
           <Route path="/staff" element={<StaffGate><DashboardPage /></StaffGate>} />
           <Route path="/staff/requests/:id" element={<StaffGate><StaffRequestPage /></StaffGate>} />
           <Route path="/staff/announcements" element={<StaffGate><StaffAnnouncePage /></StaffGate>} />
+          <Route path="/staff/journal" element={<StaffGate><JournalScreen readOnly endpoint="/api/staff/journal" /></StaffGate>} />
         </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Routes>

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_POINTS_ERROR, WEIGHT_ERROR, WORK_TYPE_KEYS } from "./journal";
 import { PAGES, REQUEST_KIND_IDS, STAFF_STATUSES, THEMES, WHEN, type Role } from "./domain";
 
 export type Risk = "read" | "reversible" | "consequential";
@@ -50,14 +51,19 @@ export const schemas = {
   get_grades: z.object({
     subject: z.string().max(160).optional(),
     semester: z.string().max(32).optional(),
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    view: z.enum(["table", "list", "summary"]).optional(),
   }),
   get_session_navigator: z.object({
     subject: z.string().max(160).optional(),
     semester: z.string().max(32).optional(),
   }),
   simulate_mark: z.object({
-    subject: z.string().trim().min(2).max(160),
-    value: z.number().int().min(2).max(5),
+    subject: z.string().trim().min(2).max(160).optional(),
+    value: z.number().min(0).max(1000),
+    points: z.number().min(0).max(1000).optional(),
+    maxPoints: z.number().int().min(1).max(1000).optional(),
   }),
   get_brief: z.object({}),
   list_requests: z.object({
@@ -161,10 +167,58 @@ export const schemas = {
   teacher_set_mark: z.object({
     groupName: z.string().trim().min(2).max(40).optional(),
     discipline: z.string().trim().min(2).max(160).optional(),
-    studentName: z.string().trim().min(2).max(120),
-    value: z.number().int().min(0).max(5),
+    studentName: z.string().trim().min(2).max(120).optional(),
+    points: z.number().min(0).max(1000).nullable().optional(),
+    value: z.number().min(0).max(1000).nullable().optional(),
     label: z.string().trim().min(2).max(80).default("Текущая"),
     kind: z.enum(["current", "credit"]).default("current"),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    workType: z.enum(WORK_TYPE_KEYS).optional(),
+    columnId: z.number().int().positive().optional(),
+    title: z.string().trim().max(80).optional(),
+    comment: z.string().trim().max(500).optional(),
+    maxScore: z.number().int(MAX_POINTS_ERROR).min(1, MAX_POINTS_ERROR).max(1000, MAX_POINTS_ERROR).optional(),
+    maxPoints: z.number().int(MAX_POINTS_ERROR).min(1, MAX_POINTS_ERROR).max(1000, MAX_POINTS_ERROR).optional(),
+    weight: z.number().positive(WEIGHT_ERROR).max(20, WEIGHT_ERROR).optional(),
+    forceNew: z.boolean().optional(),
+    fit: z.enum(["as-is", "scale", "fresh", "cap", "raise"]).optional(),
+  }).refine((value) => Boolean(value.studentName) || Boolean(value.columnId), "Нужен студент"),
+  teacher_clear_mark: z.object({ markId: z.number().int().positive() }),
+  teacher_add_journal_column: z.object({
+    groupName: z.string().trim().min(2).max(40),
+    discipline: z.string().trim().min(2).max(160),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    workType: z.enum(WORK_TYPE_KEYS),
+    title: z.string().trim().max(80).optional(),
+    maxScore: z.number().int(MAX_POINTS_ERROR).min(1, MAX_POINTS_ERROR).max(1000, MAX_POINTS_ERROR).optional(),
+    maxPoints: z.number().int(MAX_POINTS_ERROR).min(1, MAX_POINTS_ERROR).max(1000, MAX_POINTS_ERROR).optional(),
+    weight: z.number().positive(WEIGHT_ERROR).max(20, WEIGHT_ERROR).optional(),
+  }),
+  teacher_edit_journal_column: z.object({
+    columnId: z.number().int().positive(),
+    title: z.string().trim().max(80).optional(),
+    workType: z.enum(WORK_TYPE_KEYS).optional(),
+    maxScore: z.number().int(MAX_POINTS_ERROR).min(1, MAX_POINTS_ERROR).max(1000, MAX_POINTS_ERROR).optional(),
+    maxPoints: z.number().int(MAX_POINTS_ERROR).min(1, MAX_POINTS_ERROR).max(1000, MAX_POINTS_ERROR).optional(),
+    weight: z.number().positive(WEIGHT_ERROR).max(20, WEIGHT_ERROR).optional(),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }),
+  teacher_update_grading: z.object({
+    groupName: z.string().trim().min(2).max(40).optional(),
+    discipline: z.string().trim().min(2).max(160).optional(),
+    workType: z.enum(WORK_TYPE_KEYS).optional(),
+    maxPoints: z.number().int(MAX_POINTS_ERROR).min(1, MAX_POINTS_ERROR).max(1000, MAX_POINTS_ERROR).optional(),
+    weight: z.number().positive(WEIGHT_ERROR).max(20, WEIGHT_ERROR).optional(),
+    excellent: z.number().min(1).max(100).optional(),
+    good: z.number().min(0).max(99).optional(),
+    satisfactory: z.number().min(0).max(98).optional(),
+  }),
+  teacher_delete_journal_column: z.object({ columnId: z.number().int().positive() }),
+  teacher_set_topic: z.object({
+    groupName: z.string().trim().min(2).max(40),
+    discipline: z.string().trim().min(2).max(160),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    topic: z.string().trim().min(1).max(200),
   }),
   teacher_mark_absent: z.object({
     names: z.array(z.string().trim().min(2)).min(1).max(20),
@@ -178,6 +232,7 @@ export const schemas = {
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     studentName: z.string().trim().min(2).max(120),
     present: z.boolean(),
+    status: z.enum(["present", "absent", "sick", "late", "excused"]).optional(),
   }),
   teacher_announce: z.object({
     groupName: z.string().trim().min(2).max(40),
@@ -193,6 +248,7 @@ export interface RegistryItem {
   risk: Risk;
   roles: Role[];
   schema: z.ZodTypeAny;
+  expose?: boolean;
 }
 
 function item(
@@ -201,8 +257,9 @@ function item(
   roles: Role[],
   summary: string,
   argsHint: string,
+  expose = true,
 ): RegistryItem {
-  return { name, risk, roles, summary, argsHint, schema: schemas[name] };
+  return { name, risk, roles, summary, argsHint, schema: schemas[name], expose };
 }
 
 const both: Role[] = ["student", "staff", "teacher"];
@@ -217,9 +274,9 @@ export const registry: RegistryItem[] = [
   item("undo_last", "reversible", both, "Отменить последнее обратимое действие", ""),
   item("mark_notifications_read", "reversible", both, "Прочитать уведомления", "all?: true, ids?"),
   item("get_schedule", "read", ["student", "teacher"], "Расписание", "when: today|tomorrow|day_after|week|next_week|prev_week|date|range|month|changes|next_lesson, date?, from?, to?, month?, subject?"),
-  item("get_grades", "read", ["student"], "Оценки", "subject?, semester?"),
+  item("get_grades", "read", ["student"], "Оценки", "subject?, semester?, from?, to?, view?"),
   item("get_session_navigator", "read", ["student"], "Что нужно для сессии и автомата", "subject?"),
-  item("simulate_mark", "read", ["student"], "Прикинуть следующую оценку, ничего не записывая", "subject, value 2..5"),
+  item("simulate_mark", "read", ["student"], "Прикинуть следующие баллы, ничего не записывая", "subject?, points, maxPoints?"),
   item("get_brief", "read", both, "Сводка на сегодня", ""),
   item("list_requests", "read", ["student"], "Список заявок", ""),
   item("get_request_status", "read", ["student"], "Статус одной заявки", "requestId"),
@@ -243,7 +300,13 @@ export const registry: RegistryItem[] = [
   item("teacher_issue_assignment", "consequential", ["teacher"], "Выдать задание группе", "groupName, discipline, title, description, kind, deadline"),
   item("teacher_return_homework", "consequential", ["teacher"], "Вернуть работу на доработку", "assignmentId, studentName, comment"),
   item("teacher_grade_homework", "consequential", ["teacher"], "Оценить работу", "assignmentId, studentName, score, comment?"),
-  item("teacher_set_mark", "consequential", ["teacher"], "Поставить оценку в журнал", "groupName, discipline, studentName, value, label?, kind?"),
+  item("teacher_set_mark", "consequential", ["teacher"], "Поставить оценку в журнал", "groupName?, discipline?, studentName, value, date?, workType?, comment?"),
+  item("teacher_clear_mark", "reversible", ["teacher"], "Снять оценку", "markId"),
+  item("teacher_add_journal_column", "reversible", ["teacher"], "Добавить колонку журнала", "groupName, discipline, date, workType, title?"),
+  item("teacher_edit_journal_column", "reversible", ["teacher"], "Изменить колонку журнала", "columnId, title?, workType?, maxScore?, weight?, date?"),
+  item("teacher_delete_journal_column", "consequential", ["teacher"], "Удалить колонку журнала", "columnId", false),
+  item("teacher_set_topic", "reversible", ["teacher"], "Тема пары", "groupName, discipline, date, topic"),
+  item("teacher_update_grading", "consequential", ["teacher"], "Система оценивания предмета", "groupName?, discipline?, workType?, maxPoints?, weight?, excellent?, good?, satisfactory?"),
   item("teacher_mark_absent", "reversible", ["teacher"], "Отметить отсутствующих на сегодня", "names"),
   item("teacher_subject_summary", "read", ["teacher"], "Сводка по предмету", "discipline"),
   item("teacher_set_attendance", "reversible", ["teacher"], "Отметить присутствие", "groupName, discipline, date, studentName, present"),
@@ -253,7 +316,7 @@ export const registry: RegistryItem[] = [
 export const registryByName = new Map(registry.map((item) => [item.name, item]));
 
 export function toolsFor(role: Role): RegistryItem[] {
-  return registry.filter((item) => item.roles.includes(role));
+  return registry.filter((item) => item.roles.includes(role) && item.expose !== false);
 }
 
 export function stepLabel(tool: string, args: Record<string, unknown> = {}): string {
@@ -291,7 +354,7 @@ export function stepLabel(tool: string, args: Record<string, unknown> = {}): str
     get_schedule: "Смотрю расписание…",
     get_grades: "Смотрю оценки…",
     get_session_navigator: "Считаю, что нужно для сессии…",
-    simulate_mark: "Прикидываю оценку, в ведомость не пишу…",
+    simulate_mark: "Прикидываю баллы, в ведомость не пишу…",
     get_brief: "Собираю сводку дня…",
     list_requests: "Проверяю заявки…",
     get_request_status: "Смотрю статус заявки…",
@@ -316,6 +379,10 @@ export function stepLabel(tool: string, args: Record<string, unknown> = {}): str
     teacher_return_homework: "Готовлю возврат работы…",
     teacher_grade_homework: "Готовлю оценку…",
     teacher_set_mark: "Ставлю оценку в журнал…",
+    teacher_clear_mark: "Снимаю оценку…",
+    teacher_add_journal_column: "Добавляю колонку…",
+    teacher_set_topic: "Записываю тему пары…",
+    teacher_update_grading: "Меняю систему оценивания…",
     teacher_mark_absent: "Отмечаю отсутствующих…",
     teacher_subject_summary: "Собираю сводку по предмету…",
     teacher_set_attendance: "Отмечаю присутствие…",

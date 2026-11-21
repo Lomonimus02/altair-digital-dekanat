@@ -2,6 +2,11 @@ const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matc
 
 function wait(ms: number, signal: AbortSignal) {
   if (signal.aborted || reduced()) return Promise.resolve();
+  return delay(ms, signal);
+}
+
+function delay(ms: number, signal: AbortSignal) {
+  if (signal.aborted) return Promise.resolve();
   return new Promise<void>((resolve) => {
     const timer = window.setTimeout(resolve, ms);
     signal.addEventListener("abort", () => {
@@ -9,6 +14,21 @@ function wait(ms: number, signal: AbortSignal) {
       resolve();
     }, { once: true });
   });
+}
+
+export async function waitForElement(selector: string, signal: AbortSignal, timeout = 4000) {
+  const start = performance.now();
+  while (!signal.aborted && performance.now() - start < timeout) {
+    const node = document.querySelector(selector);
+    if (node instanceof HTMLElement) {
+      node.scrollIntoView({ inline: "center", block: "center", behavior: reduced() ? "auto" : "smooth" });
+      await delay(reduced() ? 0 : 120, signal);
+      const again = document.querySelector(selector);
+      return again instanceof HTMLElement ? again : node;
+    }
+    await delay(80, signal);
+  }
+  return null;
 }
 
 export function moveCursor(element: Element | null, on: boolean) {
@@ -58,6 +78,7 @@ export async function typeField(field: string, value: string, signal: AbortSigna
 const FIELD: Record<string, string> = {
   Назначение: "purpose",
   Комментарий: "comment",
+  Оценка: "journal-value",
   Текст: "homework-body",
   Условие: "description",
   Название: "title",
@@ -77,6 +98,32 @@ export async function playTurn(input: {
   onStep: (label: string) => void;
 }) {
   const { tools, open, fields, fill, navigate, signal, onStep } = input;
+  if (tools.some((tool) => ["teacher_set_mark", "teacher_set_attendance", "teacher_add_journal_column"].includes(tool))) {
+    onStep("Открываю журнал…");
+    document.body.dataset.operator = "1";
+    await glideTo("[data-agent-action='nav-journal']", signal);
+    if (open) navigate(open);
+    const params = open ? new URL(open, "http://altair.local").searchParams : null;
+    const focus = params?.get("focus") ?? "";
+    const student = params?.get("student") ?? "";
+    const cell = student && focus ? await waitForElement(`[data-agent-cell="${student}:${focus}"]`, signal) : null;
+    if (cell instanceof HTMLElement) {
+      cell.setAttribute("data-agent-live", "1");
+      await glideTo("[data-agent-live='1']", signal);
+      cell.click();
+      window.dispatchEvent(new CustomEvent("altair-open-cell", { detail: { id: cell.getAttribute("data-agent-cell") } }));
+      await wait(180, signal);
+    }
+    const pairs = fill && Object.keys(fill).length ? Object.entries(fill) : [["journal-value", fields.find((field) => field.label === "Оценка")?.value ?? ""] as const];
+    for (const [name, value] of pairs) {
+      if (!name || !value) continue;
+      await glideTo(`[data-agent-field='${name}']`, signal);
+      await typeField(name, value, signal);
+    }
+    await glideTo("[data-agent-action='journal-save']", signal);
+    onStep("Жду подтверждение…");
+    return;
+  }
   onStep(tools[0] ? "Открываю раздел…" : "Смотрю…");
   await wait(480, signal);
   const selector =

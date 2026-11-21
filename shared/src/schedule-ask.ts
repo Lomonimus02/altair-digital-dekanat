@@ -82,6 +82,7 @@ function subjectOf(text: string, names: string[]): string | undefined {
   for (const name of KNOWN_SUBJECTS) if (!pool.includes(name)) pool.push(name);
   const q = text.toLowerCase().replace(/ё/g, "е");
   const aliases: [string, string][] = [
+    ["бд", "базы данных"],
     ["базам данных", "базы данных"],
     ["базы данных", "базы данных"],
     ["баз данных", "базы данных"],
@@ -94,7 +95,8 @@ function subjectOf(text: string, names: string[]): string | undefined {
     ["экономик", "экономика фирмы"],
   ];
   for (const [alias, canonical] of aliases) {
-    if (!q.includes(alias)) continue;
+    const hit = alias.length <= 3 ? new RegExp(`(^|[^а-яёa-z])${alias}([^а-яёa-z]|$)`).test(q) : q.includes(alias);
+    if (!hit) continue;
     const found = pool.find((name) => name.toLowerCase().includes(canonical));
     if (found) return found;
   }

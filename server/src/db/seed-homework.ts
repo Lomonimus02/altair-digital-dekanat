@@ -340,6 +340,8 @@ async function seedClassmates(today: string) {
       }
     }
   }
+  const { backfillJournal } = await import("../journal");
+  await backfillJournal();
 }
 
 const isMain = process.argv[1]?.includes("seed-homework.ts") || process.argv[1]?.includes("seed-homework.js");

@@ -6,6 +6,8 @@ import {
   announcements,
   auditLog,
   disciplines,
+  gradingSchemes,
+  journalColumns,
   marks,
   notifications,
   reminders,
@@ -196,24 +198,41 @@ export async function loadDisciplines(userId: number, semester?: string) {
     .from(marks)
     .where(and(eq(marks.studentId, userId), inArray(marks.disciplineId, rows.map((row) => row.id))))
     .orderBy(asc(marks.awardedOn));
-  return rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    controlForm: row.controlForm as "exam" | "credit",
-    sessionDate: row.sessionDate,
-    obligatoryTotal: row.obligatoryTotal,
-    obligatoryDone: row.obligatoryDone,
-    semester: row.semester,
-    marks: markRows
-      .filter((mark) => mark.disciplineId === row.id)
-      .map((mark) => ({
-        id: mark.id,
-        label: mark.label,
-        value: mark.value,
-        kind: mark.kind as "current" | "exam" | "credit",
-        awardedOn: mark.awardedOn,
-      })),
-  }));
+  const owner = (await getDb().select({ groupName: users.groupName }).from(users).where(eq(users.id, userId)).limit(1))[0];
+  const schemes = owner?.groupName ? await getDb().select().from(gradingSchemes).where(eq(gradingSchemes.groupName, owner.groupName)) : [];
+  const columnIds = [...new Set(markRows.map((mark) => mark.columnId).filter((id): id is number => id != null))];
+  const columns = columnIds.length ? await getDb().select().from(journalColumns).where(inArray(journalColumns.id, columnIds)) : [];
+  const columnOf = new Map(columns.map((column) => [column.id, column]));
+  return rows.map((row) => {
+    const scheme = schemes.find((item) => item.discipline === row.name);
+    return {
+      id: row.id,
+      name: row.name,
+      controlForm: row.controlForm as "exam" | "credit",
+      sessionDate: row.sessionDate,
+      obligatoryTotal: row.obligatoryTotal,
+      obligatoryDone: row.obligatoryDone,
+      semester: row.semester,
+      thresholds: scheme
+        ? { excellent: Number(scheme.excellent), good: Number(scheme.good), satisfactory: Number(scheme.satisfactory) }
+        : undefined,
+      marks: markRows
+        .filter((mark) => mark.disciplineId === row.id)
+        .map((mark) => {
+          const column = mark.columnId ? columnOf.get(mark.columnId) : undefined;
+          return {
+            id: mark.id,
+            label: mark.label,
+            value: null,
+            points: mark.points != null ? Number(mark.points) : null,
+            maxPoints: column?.maxPoints ?? 10,
+            weight: column ? Number(column.weight) : 1,
+            kind: mark.kind as "current" | "exam" | "credit",
+            awardedOn: mark.awardedOn,
+          };
+        }),
+    };
+  });
 }
 
 export async function disciplineNames(userId: number) {

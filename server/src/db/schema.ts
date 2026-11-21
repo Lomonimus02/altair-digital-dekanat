@@ -1,4 +1,4 @@
-import { boolean, date, integer, jsonb, pgTable, serial, text, timestamp, unique } from "drizzle-orm/pg-core";
+import { boolean, date, integer, jsonb, numeric, pgTable, serial, text, timestamp, unique } from "drizzle-orm/pg-core";
 import type { UndoPayload } from "../../../shared/src/domain";
 
 export const users = pgTable("users", {
@@ -66,6 +66,50 @@ export const marks = pgTable("marks", {
   value: integer("value"),
   kind: text("kind").notNull(),
   awardedOn: date("awarded_on", { mode: "string" }),
+  columnId: integer("column_id"),
+  comment: text("comment"),
+  teacherId: integer("teacher_id"),
+  points: numeric("points", { precision: 6, scale: 1 }),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+});
+
+export const journalColumns = pgTable("journal_columns", {
+  id: serial("id").primaryKey(),
+  groupName: text("group_name").notNull(),
+  discipline: text("discipline").notNull(),
+  lessonDate: date("lesson_date", { mode: "string" }).notNull(),
+  scheduleItemId: integer("schedule_item_id"),
+  workType: text("work_type").notNull(),
+  title: text("title").notNull(),
+  maxScore: integer("max_score").notNull().default(5),
+  maxPoints: integer("max_points").notNull().default(10),
+  weight: numeric("weight", { precision: 3, scale: 1 }).notNull().default("1"),
+  position: integer("position").notNull().default(0),
+  createdBy: integer("created_by").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+});
+
+export const gradingSchemes = pgTable("grading_schemes", {
+  id: serial("id").primaryKey(),
+  groupName: text("group_name").notNull(),
+  discipline: text("discipline").notNull(),
+  defaults: jsonb("defaults").$type<Record<string, { maxPoints: number; weight: number }>>().notNull(),
+  excellent: numeric("excellent", { precision: 5, scale: 2 }).notNull().default("85"),
+  good: numeric("good", { precision: 5, scale: 2 }).notNull().default("70"),
+  satisfactory: numeric("satisfactory", { precision: 5, scale: 2 }).notNull().default("55"),
+  updatedBy: integer("updated_by"),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+});
+
+export const lessonTopics = pgTable("lesson_topics", {
+  id: serial("id").primaryKey(),
+  groupName: text("group_name").notNull(),
+  discipline: text("discipline").notNull(),
+  lessonDate: date("lesson_date", { mode: "string" }).notNull(),
+  scheduleItemId: integer("schedule_item_id"),
+  topic: text("topic").notNull(),
+  teacherId: integer("teacher_id").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
 });
 
 export const requests = pgTable("requests", {
@@ -210,6 +254,8 @@ export const attendance = pgTable(
     discipline: text("discipline").notNull(),
     lessonDate: date("lesson_date", { mode: "string" }).notNull(),
     present: boolean("present").notNull(),
+    status: text("status"),
+    comment: text("comment"),
   },
   (table) => [unique("attendance_unique").on(table.studentId, table.discipline, table.lessonDate)],
 );

@@ -5,7 +5,7 @@ import { getPool } from "./client";
 export async function migrate() {
   const pool = getPool();
   const dir = path.resolve(process.cwd(), "server/migrations");
-  const files = readdirSync(dir).filter((name) => name.endsWith(".sql")).sort();
+  const files = readdirSync(dir).filter((name) => name.endsWith(".sql") && !name.endsWith("_down.sql")).sort();
   await pool.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
     id text PRIMARY KEY,
     applied_at timestamptz NOT NULL DEFAULT now()

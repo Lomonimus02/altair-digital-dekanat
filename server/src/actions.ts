@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { academicPeriod, addDays, dueAtMoscow, formatRuDate, formatWeekSpan, longDay, mondayOf, moscowHour, moscowToday, nearestStudyDay, resolveWhen, shortDayDate, studyWeek } from "../../shared/src/dates";
+import { formatPercent, formatScore, gradeLabel, journalDateLabel, marksForTerm, pointsTotal, scalePoints, semesterBounds, validPoints, WORK_TYPES, type WorkType } from "../../shared/src/journal";
 import {
   defaultPurpose,
   kindMeta,
@@ -41,7 +42,9 @@ import {
   users,
   announcements,
   assignments,
+  attendance,
   clarifications,
+  journalColumns,
 } from "./db/schema";
 import { publish } from "./hub";
 import { badRequest, forbidden, HttpError, notFound } from "./httpError";
@@ -89,6 +92,7 @@ import {
   loadForTeacher,
   type HomeworkKind,
 } from "./homework";
+import { addColumn, applyMark, clearMark, deleteColumn, editColumn, planMark, saveScheme, setTopic } from "./journal";
 import { triageRequest } from "./triage";
 import { getConfig } from "./config";
 
@@ -199,21 +203,127 @@ export async function perform(
     }
     args.discipline = taught[0].discipline;
   }
-  if (name === "teacher_set_mark" && (!args.groupName || !args.discipline)) {
+  if (name === "teacher_set_mark" && !args.columnId && (!args.groupName || !args.discipline)) {
     const found = await resolveTaughtStudent(user, String(args.studentName), String(args.discipline ?? ""));
     if (!("studentName" in found)) {
       if (!found.options.length) return { ok: true, summary: "Такого студента в ваших группах нет." };
       const clarificationId = await saveClarification(user.id, name, args);
+      const groups = [...new Set(found.options.map((row) => row.groupName))];
+      const group = groups.length === 1 ? groups[0] : "";
+      const date = typeof args.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.date) ? args.date : moscowToday();
+      const from = mondayOf(date);
+      const who = found.options[0]?.studentName ?? String(args.studentName);
       return {
         ok: true,
-        summary: "Несколько предметов. Куда поставить оценку?",
+        summary: `Несколько предметов. Куда поставить оценку, ${who}?`,
         choices: found.options.map((row) => ({ label: row.discipline, clarificationId, entityId: `${row.groupName}||${row.discipline}` })),
-        card: { title: String(args.studentName), rows: found.options.map((row) => ({ label: row.groupName, value: row.discipline })) },
+        card: { title: who, rows: found.options.map((row) => ({ label: row.groupName, value: row.discipline })) },
+        ui: [{ type: "navigate", to: `/teach/journal?group=${encodeURIComponent(group)}&from=${from}&to=${addDays(from, 6)}` }],
       };
     }
     args.groupName = found.groupName;
     args.discipline = found.discipline;
     args.studentName = found.studentName;
+  }
+  if (name === "teacher_set_mark" && (args.groupName || args.columnId)) {
+    if (args.fit === "fresh") {
+      args.forceNew = true;
+      delete args.columnId;
+      const pendingPoints = Number(args.points ?? args.value ?? 0);
+      const pendingMax = args.maxPoints == null ? null : Number(args.maxPoints);
+      if (pendingMax == null || pendingPoints > pendingMax) args.maxPoints = Math.min(1000, Math.max(1, Math.ceil(pendingPoints)));
+    }
+    const plan = await planMark(user, args);
+    if ("choices" in plan && plan.choices) {
+      const clarificationId = await saveClarification(user.id, name, args);
+      return {
+        ok: true,
+        summary: "Несколько работ в этот день. Какую?",
+        choices: plan.choices.map((row) => ({ label: row.fresh ? "Новая работа" : row.title, clarificationId, entityId: row.fresh ? "col:new" : `col:${row.id}` })),
+        card: { title: "Какая работа?", rows: plan.choices.map((row) => ({ label: row.fresh ? "Новая" : row.date, value: row.title })) },
+      };
+    }
+    args.groupName = plan.groupName;
+    args.discipline = plan.discipline;
+    args.studentName = plan.student.fullName;
+    args.studentId = plan.student.id;
+    args.date = plan.date;
+    args.workType = plan.workType;
+    args.title = plan.title;
+    if (plan.column && args.fit !== "fresh") args.columnId = plan.column.id;
+    args.previous = plan.previous;
+    args.noLesson = !plan.lesson;
+    args.willCreate = plan.createColumn;
+    args.weight = plan.weight;
+    const askedMax = args.maxPoints == null ? null : Number(args.maxPoints);
+    const rawPoints = args.points == null ? (args.value == null ? null : Number(args.value)) : Number(args.points);
+    const columnMax = plan.column?.maxPoints ?? plan.maxPoints;
+    if (plan.column && args.fit === "as-is") args.maxPoints = columnMax;
+    else if (plan.column && args.fit === "scale" && rawPoints != null && askedMax != null) {
+      args.points = scalePoints(rawPoints, askedMax, columnMax);
+      args.maxPoints = columnMax;
+    } else if (args.fit === "cap") {
+      const cap = plan.column ? columnMax : Number(args.maxPoints ?? plan.maxPoints);
+      args.points = cap;
+      args.maxPoints = cap;
+    } else if (args.fit === "fresh") args.maxPoints = askedMax ?? plan.maxPoints;
+    else if (!args.fit) args.maxPoints = plan.column ? columnMax : (askedMax ?? plan.maxPoints);
+    if (args.points == null && args.value != null) args.points = args.value;
+    const pointsNow = args.points == null ? null : Number(args.points);
+    const maxNow = Number(args.maxPoints);
+    if (ctx.source === "agent" && pointsNow != null && !args.fit && plan.column && (askedMax != null && askedMax !== columnMax || !validPoints(pointsNow, columnMax))) {
+      const saved = { ...args, points: rawPoints } as Record<string, unknown>;
+      if (askedMax == null) delete saved.maxPoints;
+      else saved.maxPoints = askedMax;
+      const clarificationId = await saveClarification(user.id, name, saved);
+      const scaled = askedMax != null ? scalePoints(rawPoints ?? pointsNow, askedMax, columnMax) : null;
+      const raised = Math.min(1000, Math.max(columnMax + 1, Math.ceil(rawPoints ?? pointsNow)));
+      const choices = [
+        ...(validPoints(rawPoints ?? pointsNow, columnMax) ? [{ label: `Поставить ${formatScore(rawPoints ?? pointsNow)} из ${columnMax}`, entityId: "fit:as-is" }] : []),
+        ...(askedMax != null && askedMax !== columnMax && scaled != null ? [{ label: `Пересчитать в ${formatScore(scaled)} из ${columnMax}`, entityId: "fit:scale" }] : []),
+        ...(!validPoints(rawPoints ?? pointsNow, columnMax) && askedMax == null ? [{ label: `Поставить ${columnMax} из ${columnMax}`, entityId: "fit:cap" }] : []),
+        { label: `Создать новую работу из ${askedMax != null && askedMax !== columnMax ? askedMax : raised}`, entityId: "fit:fresh" },
+      ];
+      const summary = askedMax != null && askedMax !== columnMax
+        ? validPoints(rawPoints ?? pointsNow, columnMax)
+          ? `У работы максимум ${columnMax}. Поставить ${formatScore(rawPoints ?? pointsNow)} из ${columnMax}, пересчитать в ${formatScore(scaled ?? 0)} из ${columnMax}, или создать новую работу из ${askedMax}?`
+          : `У работы максимум ${columnMax}. ${formatScore(rawPoints ?? pointsNow)} больше этого максимума. Пересчитать в ${formatScore(scaled ?? 0)} из ${columnMax} или создать новую работу из ${askedMax}?`
+        : `У работы максимум ${columnMax}. ${formatScore(rawPoints ?? pointsNow)} баллов больше максимума. Поставить ${columnMax} из ${columnMax} или создать новую работу из ${raised}?`;
+      return {
+        ok: true,
+        summary,
+        choices: choices.map((choice) => ({ ...choice, clarificationId })),
+        card: { title: plan.title, rows: choices.map((choice) => ({ label: "Вариант", value: choice.label })) },
+      };
+    }
+    if (ctx.source === "agent" && pointsNow != null && !validPoints(pointsNow, maxNow)) {
+      const clarificationId = await saveClarification(user.id, name, args);
+      const raised = Math.min(1000, Math.max(maxNow + 1, Math.ceil(pointsNow)));
+      return {
+        ok: true,
+        summary: `Максимум ${maxNow}. ${formatScore(pointsNow)} баллов больше. Поставить ${maxNow} из ${maxNow} или сделать максимум ${raised}?`,
+        choices: [
+          { label: `Поставить ${maxNow} из ${maxNow}`, clarificationId, entityId: "fit:cap" },
+          { label: `Сделать максимум ${raised}`, clarificationId, entityId: "fit:raise" },
+        ],
+      };
+    }
+  }
+  if (name === "teacher_update_grading" && (!args.groupName || !args.discipline)) {
+    const load = await loadForTeacher(user.id);
+    const needle = String(args.discipline ?? "").toLowerCase();
+    const names = needle ? load.filter((row) => row.discipline.toLowerCase().includes(needle.slice(0, 6))) : load;
+    if (!names.length) return { ok: true, summary: "Такого предмета в вашей нагрузке нет." };
+    if (names.length > 1) {
+      const clarificationId = await saveClarification(user.id, name, args);
+      return {
+        ok: true,
+        summary: "Несколько предметов. Для какого менять баллы?",
+        choices: names.map((row) => ({ label: `${row.groupName} · ${row.discipline}`, clarificationId, entityId: `${row.groupName}||${row.discipline}` })),
+      };
+    }
+    args.groupName = names[0].groupName;
+    args.discipline = names[0].discipline;
   }
 
   if (def.risk === "consequential" && ctx.source === "agent" && !ctx.confirmed) {
@@ -369,7 +479,29 @@ async function buildPreview(user: PublicUser, name: string, args: Record<string,
       ],
     };
   }
-  if (name === "teacher_grade_homework" || name === "teacher_set_mark") {
+  if (name === "teacher_set_mark") {
+    const work = WORK_TYPES[String(args.workType ?? "current") as WorkType];
+    const date = String(args.date ?? moscowToday());
+    const lines = [
+      args.willCreate ? `Создам колонку «${args.title ?? work?.label ?? "Работа"}» ${date.slice(8, 10)}.${date.slice(5, 7)}.` : "",
+      args.noLesson ? `${date.slice(8, 10)}.${date.slice(5, 7)} пары по «${args.discipline}» нет — всё равно поставить?` : "",
+    ].filter(Boolean);
+    return {
+      title: "Поставить оценку",
+      summary: lines.join(" ") || "Оценка попадёт в журнал.",
+      fields: [
+        { label: "Студент", value: String(args.studentName) },
+        { label: "Группа", value: String(args.groupName ?? "его группа") },
+        { label: "Предмет", value: String(args.discipline ?? "предмет") },
+        { label: "Дата", value: journalDateLabel(date) },
+        { label: "Работа", value: `${args.title ?? work?.label ?? "Работа"} (вес ${args.weight ?? work?.weight ?? 1})` },
+        { label: "Баллы", value: `${args.points ?? args.value ?? "—"} из ${args.maxPoints ?? 10} баллов` },
+        { label: "Было", value: args.previous == null ? "—" : String(args.previous) },
+        ...(args.comment ? [{ label: "Комментарий", value: String(args.comment) }] : []),
+      ],
+    };
+  }
+  if (name === "teacher_grade_homework") {
     if (name === "teacher_grade_homework" && args.assignmentId && !args.workTitle) {
       const detail = await getTeacherAssignment(user, Number(args.assignmentId));
       args.workTitle = detail.title;
@@ -418,6 +550,20 @@ async function buildPreview(user: PublicUser, name: string, args: Record<string,
       fields: [
         { label: "Заголовок", value: String(args.title) },
         { label: "Текст", value: String(args.body) },
+      ],
+    };
+  }
+  if (name === "teacher_update_grading") {
+    const work = args.workType ? WORK_TYPES[String(args.workType) as WorkType] : null;
+    return {
+      title: "Система оценивания",
+      summary: "Пороги и веса применятся к этому предмету.",
+      fields: [
+        { label: "Группа", value: String(args.groupName ?? "—") },
+        { label: "Предмет", value: String(args.discipline ?? "—") },
+        ...(work ? [{ label: "Работа", value: work.label }] : []),
+        ...(args.maxPoints != null ? [{ label: "Максимум", value: String(args.maxPoints) }] : []),
+        ...(args.weight != null ? [{ label: "Вес", value: String(args.weight) }] : []),
       ],
     };
   }
@@ -549,18 +695,24 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
     return gradesAnswer(user, args, "advice");
   },
   async simulate_mark(user, args) {
+    if (!args.subject) return { summary: "По какому предмету считать баллы? Например: если получу 8 баллов по базам данных." };
     const today = moscowToday();
     const semester = String(args.semester || academicPeriod(today).current.id);
-    const list = await loadDisciplines(user.id, semester);
+    const term = semesterBounds(today);
+    const list = (await loadDisciplines(user.id, semester)).map((item) => ({ ...item, marks: marksForTerm(item.marks, term.from, term.to) }));
     const { subject } = await resolveSubject(user, String(args.subject));
     const discipline = list.find((item) => item.name === subject);
     if (!discipline) {
       return { summary: `Не нашёл дисциплину «${args.subject}». В зачётке: ${list.map((item) => item.name).join(", ") || "пусто"}.` };
     }
+    const points = Number(args.points ?? args.value);
+    const maxPoints = Number(args.maxPoints ?? 10);
     const before = analyzeSession([discipline], today)[0];
-    const after = analyzeSession([withHypothetical(discipline, Number(args.value))], today)[0];
+    const after = analyzeSession([withHypothetical(discipline, points, maxPoints)], today)[0];
+    const shown = formatPercent(after.average);
+    const tail = after.average != null && !after.headline.includes(shown) ? ` Получится ${shown}.` : "";
     return {
-      summary: `Если следующая оценка по «${discipline.name}» будет ${args.value} (в ведомость ничего не записал): сейчас — ${before.headline} После неё — ${after.headline}`,
+      summary: `Если следующая работа по «${discipline.name}» будет ${points} из ${maxPoints} баллов (в ведомость ничего не записал): сейчас — ${before.headline} После неё — ${after.headline}${tail}`,
       ui: [{ type: "navigate", to: `/grades?semester=${semester}&subject=${encodeURIComponent(discipline.name)}`, highlight: `grade-${discipline.id}` }],
     };
   },
@@ -916,15 +1068,41 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
     return { summary: roll.summary, ui: [{ type: "navigate", to: roll.to, highlight: "journal" }] };
   },
   async teacher_set_mark(user, args) {
-    const result = await setJournalMark(user, String(args.groupName), String(args.discipline), String(args.studentName), Number(args.value), String(args.label ?? "Текущая"), args.kind === "credit" ? "credit" : "current");
+    const result = await applyMark(user, args);
+    const sized = args.maxPoints != null ? `|${args.maxPoints}${args.weight != null ? `|${args.weight}` : ""}` : "";
+    const focus = args.columnId ? String(args.columnId) : `new|${args.date}|${args.workType ?? "current"}${sized}`;
     return {
       summary: result.summary,
       ui: [
         { type: "invalidate", keys: ["grades", "journal"] },
-        { type: "navigate", to: `/teach/journal?group=${encodeURIComponent(String(args.groupName))}&discipline=${encodeURIComponent(String(args.discipline))}`, highlight: `journal-${args.studentName}` },
+        { type: "navigate", to: guideFor("teacher_set_mark", { ...args, focus }) ?? "/teach/journal", highlight: `journal-${args.studentId}` },
       ],
-      reversible: { undo: { type: "mark", markId: result.markId } },
+      reversible: { undo: result.undo },
     };
+  },
+  async teacher_clear_mark(user, args) {
+    const result = await clearMark(user, Number(args.markId));
+    return { summary: result.summary, ui: [{ type: "invalidate", keys: ["grades", "journal"] }], reversible: { undo: result.undo } };
+  },
+  async teacher_add_journal_column(user, args) {
+    const result = await addColumn(user, args);
+    return { summary: result.summary, ui: [{ type: "invalidate", keys: ["journal"] }], ...(result.undo ? { reversible: { undo: result.undo } } : {}) };
+  },
+  async teacher_edit_journal_column(user, args) {
+    const result = await editColumn(user, args);
+    return { summary: result.summary, ui: [{ type: "invalidate", keys: ["journal"] }], reversible: { undo: result.undo } };
+  },
+  async teacher_delete_journal_column(user, args) {
+    const result = await deleteColumn(user, Number(args.columnId));
+    return { summary: result.summary, ui: [{ type: "invalidate", keys: ["journal", "grades"] }], reversible: { undo: result.undo } };
+  },
+  async teacher_update_grading(user, args) {
+    const result = await saveScheme(user, args);
+    return { summary: result.summary, ui: [{ type: "invalidate", keys: ["journal", "grades"] }], reversible: { undo: result.undo } };
+  },
+  async teacher_set_topic(user, args) {
+    const result = await setTopic(user, String(args.groupName), String(args.discipline), String(args.date), String(args.topic));
+    return { summary: result.summary, ui: [{ type: "invalidate", keys: ["journal"] }], reversible: { undo: result.undo } };
   },
   async teacher_mark_absent(user, args) {
     const summary = await markAbsentToday(user, args.names as string[]);
@@ -935,8 +1113,9 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
     return { summary, ui: [{ type: "navigate", to: "/teach/homework", highlight: "queue" }] };
   },
   async teacher_set_attendance(user, args) {
-    const summary = await setAttendance(user, String(args.groupName), String(args.discipline), String(args.date), String(args.studentName), Boolean(args.present));
-    return { summary, ui: [{ type: "navigate", to: "/teach/journal", highlight: "journal" }] };
+    const { setAttendanceStatus } = await import("./journal");
+    const result = await setAttendanceStatus(user, String(args.groupName), String(args.discipline), String(args.date), String(args.studentName), Boolean(args.present), args.status ? String(args.status) : undefined);
+    return { summary: result.summary, ui: [{ type: "navigate", to: "/teach/journal", highlight: "journal" }, { type: "invalidate", keys: ["journal"] }], reversible: { undo: result.undo } };
   },
   async teacher_announce(user, args) {
     const summary = await announceToGroup(user, String(args.groupName), String(args.title), String(args.body));
@@ -1046,8 +1225,19 @@ async function gradesAnswer(user: PublicUser, args: Record<string, unknown>, mod
     }
     subject = found;
   }
-  const items = analyzeSession(list, today);
-  const summary = mode === "advice" ? narrateAdvice(items, subject) : subject ? narrateAdvice(items, subject) : narrateOverview(items);
+  const term = semesterBounds(today);
+  const scoped = list.map((item) => ({ ...item, marks: marksForTerm(item.marks, term.from, term.to) }));
+  const items = analyzeSession(scoped, today);
+  const summaryBase = mode === "advice" ? narrateAdvice(items, subject) : subject ? narrateAdvice(items, subject) : narrateOverview(items);
+  let pointsLine = "";
+  if (mode === "overview") {
+    const rows = scoped.filter((item) => !subject || item.name === subject).flatMap((item) => {
+      const total = pointsTotal(item.marks.filter((mark) => mark.points != null).map((mark) => ({ points: Number(mark.points), maxPoints: mark.maxPoints ?? 10, weight: mark.weight ?? 1 })), item.thresholds);
+      return total.percent == null ? [] : [{ name: item.name, total, controlForm: item.controlForm, thresholds: item.thresholds }];
+    });
+    if (rows.length) pointsLine = `\n\nЗа семестр: ${rows.slice(0, 4).map((row) => `${row.name}: ${formatPercent(row.total.percent)} (набрано ${formatScore(row.total.earned)} из ${row.total.possible}), итог «${gradeLabel(row.total.percent, row.thresholds, row.controlForm)}»`).join("; ")}.`;
+  }
+  const summary = summaryBase + pointsLine;
   const focus = subject ? items.find((item) => item.name === subject) : undefined;
   const query = new URLSearchParams({ semester });
   if (subject) query.set("subject", subject);
@@ -1112,6 +1302,75 @@ async function undoAudit(user: PublicUser, auditId: number): Promise<Outcome> {
     }
   } else if (undo.type === "mark") {
     await getDb().delete(marks).where(eq(marks.id, undo.markId));
+  } else if (undo.type === "mark_cell") {
+    if (undo.created || !undo.prev) await getDb().delete(marks).where(eq(marks.id, undo.markId));
+    else await getDb().update(marks).set({ value: undo.prev.value, points: undo.prev.points == null ? null : String(undo.prev.points), comment: undo.prev.comment, label: undo.prev.label, kind: undo.prev.kind, awardedOn: undo.prev.awardedOn }).where(eq(marks.id, undo.markId));
+    if (undo.created) await getDb().delete(notifications).where(eq(notifications.href, `/grades?view=table&focus=${undo.markId}`));
+    else if (undo.notice?.id) {
+      if (undo.notice.previousBody == null) await getDb().delete(notifications).where(eq(notifications.id, undo.notice.id));
+      else await getDb().update(notifications).set({ body: undo.notice.previousBody }).where(eq(notifications.id, undo.notice.id));
+    }
+    if (undo.createdColumnId) {
+      const left = await getDb().select({ id: marks.id }).from(marks).where(eq(marks.columnId, undo.createdColumnId)).limit(1);
+      if (!left[0]) await getDb().delete(journalColumns).where(eq(journalColumns.id, undo.createdColumnId));
+    }
+  } else if (undo.type === "mark_restore") {
+    await getDb().insert(marks).values(undo.row);
+  } else if (undo.type === "journal_column") {
+    const column = undo.column as { id?: number; removed?: boolean; restore?: boolean; groupName?: string; discipline?: string; lessonDate?: string; workType?: string; title?: string; maxScore?: number; weight?: string; createdBy?: number; scheduleItemId?: number | null };
+    if (column.removed && column.id) {
+      const left = await getDb().select({ id: marks.id }).from(marks).where(eq(marks.columnId, column.id)).limit(1);
+      if (!left[0]) await getDb().delete(journalColumns).where(eq(journalColumns.id, column.id));
+    } else if (column.restore && column.id) {
+      await getDb().update(journalColumns).set({
+        title: String(column.title),
+        workType: String(column.workType),
+        maxScore: Number(column.maxScore),
+        weight: String(column.weight),
+        lessonDate: String(column.lessonDate),
+      }).where(eq(journalColumns.id, column.id));
+    } else if (column.groupName) {
+      const [created] = await getDb().insert(journalColumns).values({
+        groupName: String(column.groupName),
+        discipline: String(column.discipline),
+        lessonDate: String(column.lessonDate),
+        workType: String(column.workType),
+        title: String(column.title),
+        maxScore: Number(column.maxScore ?? 5),
+        weight: String(column.weight ?? 1),
+        createdBy: Number(column.createdBy ?? user.id),
+        scheduleItemId: column.scheduleItemId ?? null,
+      }).returning();
+      for (const mark of undo.marks) {
+        const row = mark as { studentId: number; disciplineId: number; label: string; value: number | null; kind: string; awardedOn: string | null; comment: string | null; teacherId: number | null };
+        await getDb().insert(marks).values({ ...row, columnId: created.id });
+      }
+    }
+  } else if (undo.type === "grading") {
+    const { gradingSchemes } = await import("./db/schema");
+    if (!undo.previous) {
+      await getDb().delete(gradingSchemes).where(and(eq(gradingSchemes.groupName, undo.groupName), eq(gradingSchemes.discipline, undo.discipline)));
+    } else {
+      await getDb().update(gradingSchemes).set({
+        defaults: undo.previous.defaults,
+        excellent: String(undo.previous.excellent),
+        good: String(undo.previous.good),
+        satisfactory: String(undo.previous.satisfactory),
+      }).where(and(eq(gradingSchemes.groupName, undo.groupName), eq(gradingSchemes.discipline, undo.discipline)));
+    }
+  } else if (undo.type === "attendance") {
+    if (undo.present == null) {
+      await getDb().delete(attendance).where(and(eq(attendance.studentId, undo.studentId), eq(attendance.discipline, undo.discipline), eq(attendance.lessonDate, undo.date)));
+    } else {
+      await getDb().update(attendance).set({ present: undo.present, status: undo.status }).where(and(eq(attendance.studentId, undo.studentId), eq(attendance.discipline, undo.discipline), eq(attendance.lessonDate, undo.date)));
+    }
+  } else if (undo.type === "topic") {
+    const { lessonTopics } = await import("./db/schema");
+    if (!undo.topic) {
+      await getDb().delete(lessonTopics).where(and(eq(lessonTopics.groupName, undo.groupName), eq(lessonTopics.discipline, undo.discipline), eq(lessonTopics.lessonDate, undo.date)));
+    } else {
+      await getDb().update(lessonTopics).set({ topic: undo.topic }).where(and(eq(lessonTopics.groupName, undo.groupName), eq(lessonTopics.discipline, undo.discipline), eq(lessonTopics.lessonDate, undo.date)));
+    }
   } else if (undo.type === "submission") {
     if (undo.markId) await getDb().delete(marks).where(eq(marks.id, undo.markId));
     if (undo.submissionId) {
@@ -1289,7 +1548,7 @@ export async function runTurn(
   fill?: Record<string, string>;
 }> {
   let mode: "device" | "fallback" | "server" | "cloud" = "fallback";
-  let caption = "Быстрый режим";
+  let caption = "Локальный режим";
   let proposal: Proposal | null = null;
   if (input.proposal) {
     const parsed = ProposalSchema.safeParse(input.proposal);
@@ -1322,7 +1581,7 @@ export async function runTurn(
     const names = user.role === "student" ? await disciplineNames(user.id) : [];
     proposal = parseIntent(input.message, user.role, names);
     mode = "fallback";
-    caption = "Быстрый режим";
+    caption = "Локальный режим";
   }
 
   const steps: { label: string; status: "ok" | "error" | "skipped"; detail?: string; tool?: string }[] = [];
@@ -1378,6 +1637,12 @@ const ACT_TOOLS = new Set([
   "teacher_grade_homework",
   "teacher_return_homework",
   "teacher_set_mark",
+  "teacher_clear_mark",
+  "teacher_add_journal_column",
+  "teacher_edit_journal_column",
+  "teacher_delete_journal_column",
+  "teacher_set_topic",
+  "teacher_update_grading",
   "teacher_mark_absent",
   "teacher_set_attendance",
   "teacher_issue_assignment",
@@ -1399,6 +1664,17 @@ function guideFor(name: string, args: Record<string, unknown>) {
   if (name === "staff_publish_announcement") return "/staff/announcements";
   if (name === "staff_set_status" && args.requestId) return `/staff/requests/${args.requestId}`;
   if ((name === "teacher_grade_homework" || name === "teacher_return_homework") && args.assignmentId) return `/teach/homework/${args.assignmentId}`;
+  if (name === "teacher_set_mark" && args.groupName && args.discipline) {
+    const date = String(args.date ?? moscowToday());
+    const from = mondayOf(date);
+    const sized = args.maxPoints != null ? `|${args.maxPoints}${args.weight != null ? `|${args.weight}` : ""}` : "";
+    const focus = args.focus ?? (args.columnId ? String(args.columnId) : `new|${date}|${args.workType ?? "current"}${sized}`);
+    const student = args.studentId ? `&student=${args.studentId}` : "";
+    return `/teach/journal?group=${encodeURIComponent(String(args.groupName))}&discipline=${encodeURIComponent(String(args.discipline))}&from=${from}&to=${addDays(from, 6)}&focus=${encodeURIComponent(String(focus))}${student}`;
+  }
+  if (name === "teacher_add_journal_column" || name === "teacher_set_attendance" || name === "teacher_set_topic") {
+    return `/teach/journal?group=${encodeURIComponent(String(args.groupName ?? ""))}&discipline=${encodeURIComponent(String(args.discipline ?? ""))}`;
+  }
   return undefined;
 }
 
@@ -1445,10 +1721,24 @@ export async function clarifyChoice(user: PublicUser, clarificationId: string, e
     args.scheduleItemId = Number(entityId);
   } else if (row.tool === "teacher_issue_assignment") {
     args.discipline = entityId;
-  } else if (row.tool === "teacher_set_mark") {
-    const [groupName, discipline] = entityId.split("||");
-    args.groupName = groupName;
-    args.discipline = discipline;
+  } else if (row.tool === "teacher_update_grading" || row.tool === "teacher_set_mark") {
+    if (entityId === "col:new") args.forceNew = true;
+    else if (entityId === "fit:fresh") {
+      args.fit = "fresh";
+      args.forceNew = true;
+      delete args.columnId;
+    } else if (entityId === "fit:raise") {
+      const points = Number(args.points ?? args.value ?? 0);
+      args.fit = "raise";
+      args.maxPoints = Math.min(1000, Math.max(Number(args.maxPoints ?? 0) + 1, Math.ceil(points)));
+      args.points = points;
+    } else if (entityId.startsWith("fit:")) args.fit = entityId.slice(4);
+    else if (entityId.startsWith("col:")) args.columnId = Number(entityId.slice(4));
+    else {
+      const [groupName, discipline] = entityId.split("||");
+      args.groupName = groupName;
+      args.discipline = discipline;
+    }
   } else {
     args.assignmentId = Number(entityId);
     if (row.tool === "teacher_grade_homework" || row.tool === "teacher_return_homework") {
@@ -1462,16 +1752,19 @@ export async function clarifyChoice(user: PublicUser, clarificationId: string, e
     }
   }
   const result = await perform(user, row.tool, args, { source: "agent", confirmed: false });
+  const navigate = (result.ui ?? []).find((item) => item.type === "navigate");
   return {
     say: result.summary,
-    caption: "Быстрый режим",
-    steps: [] as { label: string; status: "ok" | "error" | "skipped" }[],
-    ui: result.confirm ? [] : (result.ui ?? []),
+    caption: "Локальный режим",
+    steps: [{ label: "Открываю журнал…", status: "ok" as const, tool: row.tool }],
+    ui: result.ui ?? [],
     confirm: result.confirm,
     cards: result.card ? [result.card] : undefined,
     choices: result.choices,
     download: result.download,
     undo: result.undoOffer,
+    open: navigate && navigate.type === "navigate" ? navigate.to : undefined,
+    fill: result.fill,
   };
 }
 

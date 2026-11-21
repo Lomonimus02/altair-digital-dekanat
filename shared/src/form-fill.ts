@@ -20,6 +20,9 @@ export function formFill(tool: string, args: Record<string, unknown>): Record<st
     return { kind: text(args.kind), purpose: text(args.purpose), comment: text(args.comment) };
   }
   if (tool === "submit_homework") return { "homework-body": text(args.body) };
+  if (tool === "teacher_set_mark") {
+    return { "journal-value": text(args.points ?? args.value), ...(args.comment ? { "journal-comment": text(args.comment) } : {}) };
+  }
   if (tool === "staff_publish_announcement") return { "announce-title": text(args.title), "announce-body": text(args.body) };
   return {};
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { academicPeriod, formatDdMm, shortDayDate } from "../../shared/src/dates";
 import { narrateWeekSchedule } from "../../shared/src/narrate";
+import { countsAsSemester, gradeLabel, scalePoints } from "../../shared/src/journal";
 import { analyzeDiscipline } from "../../shared/src/navigator";
 import { parseIntent } from "../../shared/src/parser";
 import { registry } from "../../shared/src/registry";
@@ -28,17 +29,36 @@ describe("навигатор сессии", () => {
     obligatoryDone: 3,
     semester: "2026-fall",
     marks: [
-      { id: 1, label: "К1", value: 5, kind: "current", awardedOn: null },
-      { id: 2, label: "С", value: 4, kind: "current", awardedOn: null },
-      { id: 3, label: "К2", value: 5, kind: "current", awardedOn: null },
+      { id: 1, label: "К1", value: null, points: 10, maxPoints: 10, kind: "current", awardedOn: null },
+      { id: 2, label: "С", value: null, points: 8, maxPoints: 10, kind: "current", awardedOn: null },
+      { id: 3, label: "К2", value: null, points: 10, maxPoints: 10, kind: "current", awardedOn: null },
     ],
   };
 
   it("говорит, какая оценка нужна для автомата", () => {
     const item = analyzeDiscipline(base, "2026-11-12");
     expect(item.automatic).toBeNull();
-    expect(item.headline + item.details.join(" ")).toMatch(/отлично/i);
-    expect(item.details.join(" ")).toMatch(/5/);
+    expect(item.headline + item.details.join(" ")).toMatch(/отлично|85/);
+  });
+
+  it("работа ниже 55% называет получившийся процент", () => {
+    const item = analyzeDiscipline({
+      ...base,
+      obligatoryDone: 4,
+      marks: [{ id: 1, label: "К", value: null, points: 4, maxPoints: 10, weight: 1, kind: "current", awardedOn: null }],
+    }, "2026-11-12");
+    expect(item.headline).toMatch(/40,0%/);
+    expect(item.risk).toBe("high");
+  });
+
+  it("зачёт называется зачтено по порогу схемы, а учебная часть семестра считается итогом", () => {
+    expect(gradeLabel(60, { excellent: 85, good: 70, satisfactory: 55 }, "credit")).toBe("зачтено");
+    expect(gradeLabel(40, { excellent: 85, good: 70, satisfactory: 55 }, "credit")).toBe("не зачтено");
+    expect(gradeLabel(60, { excellent: 95, good: 80, satisfactory: 70 }, "credit")).toBe("не зачтено");
+    expect(scalePoints(14, 20, 15)).toBe(10.5);
+    expect(scalePoints(18, 20, 15)).toBe(13.5);
+    expect(countsAsSemester({ from: "2026-09-01", to: "2026-12-31" }, "2026-11-21")).toBe(true);
+    expect(countsAsSemester({ from: "2026-11-01", to: "2026-11-30" }, "2026-11-21")).toBe(false);
   });
 
   it("двойка закрывает автомат", () => {
@@ -49,8 +69,8 @@ describe("навигатор сессии", () => {
         obligatoryDone: 4,
         obligatoryTotal: 4,
         marks: [
-          { id: 1, label: "К", value: 2, kind: "current", awardedOn: null },
-          { id: 2, label: "С", value: 4, kind: "current", awardedOn: null },
+          { id: 1, label: "К", value: null, points: 4, maxPoints: 10, kind: "current", awardedOn: null },
+          { id: 2, label: "С", value: null, points: 8, maxPoints: 10, kind: "current", awardedOn: null },
         ],
       },
       "2026-11-12",

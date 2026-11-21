@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { formatDdMm } from "@shared/dates";
+import { JournalScreen } from "../components/journal/JournalScreen";
 import { useEffect, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAction } from "../lib/action";
 import { BackLink, Button, Choice, EmptyState, ErrorState, Glass, LoadingBlock, Pill } from "../components/ui";
@@ -12,6 +12,10 @@ interface Home {
   review: { assignmentId: number; title: string; studentName: string; groupName: string }[];
   lessons: { id: number; groupName: string; discipline: string; startsAt: string; endsAt: string; room: string | null }[];
   pending: number;
+}
+
+function moscowDate() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow" }).format(new Date());
 }
 
 export function TeachHome() {
@@ -59,76 +63,9 @@ export function TeachHome() {
 }
 
 export function TeachJournal() {
-  const home = useQuery({ queryKey: ["teach"], queryFn: () => api<Home>("/api/teach/home") });
-  const [params] = useSearchParams();
-  const [group, setGroup] = useState(params.get("group") ?? "");
-  const [discipline, setDiscipline] = useState(params.get("discipline") ?? "");
-  useEffect(() => {
-    const nextGroup = params.get("group");
-    const nextDiscipline = params.get("discipline");
-    if (nextGroup) setGroup(nextGroup);
-    if (nextDiscipline) setDiscipline(nextDiscipline);
-  }, [params]);
-  const subjects = (home.data?.groups ?? []).filter((row) => !group || row.groupName === group);
-  const activeDiscipline = discipline || subjects[0]?.discipline || "";
-  const activeGroup = group || subjects[0]?.groupName || "";
-  const journal = useQuery({
-    queryKey: ["journal", activeGroup, activeDiscipline],
-    queryFn: () => api<{ studyDate: string; students: JournalStudent[] }>(`/api/teach/journal?group=${encodeURIComponent(activeGroup)}&discipline=${encodeURIComponent(activeDiscipline)}`),
-    enabled: Boolean(activeGroup && activeDiscipline),
-  });
-  const run = useAction();
-  if (home.isLoading) return <LoadingBlock />;
-  return (
-    <div className="space-y-4" data-agent-target="journal">
-      <BackLink to="/teach" />
-      <h1>Журнал</h1>
-      <Choice label="Группа" value={activeGroup} options={[...new Set((home.data?.groups ?? []).map((row) => row.groupName))].map((name) => ({ value: name, label: name }))} onChange={(value) => { setGroup(value); setDiscipline(""); }} />
-      <Choice label="Предмет" value={activeDiscipline} options={subjects.map((row) => ({ value: row.discipline, label: row.discipline }))} onChange={setDiscipline} />
-      {journal.isLoading ? <LoadingBlock /> : null}
-      {journal.error ? <ErrorState text="Журнал недоступен" /> : null}
-      <div className="stagger space-y-3 md:hidden">
-        {journal.data?.students.map((student) => (
-          <Glass key={student.name} target={`journal-${student.name}`}>
-            <p className="font-semibold">{student.name}</p>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <span className="text-xs text-[var(--muted)]">{attendanceLabel(journal.data?.studyDate)}</span>
-              <AttendanceButton student={student} studyDate={journal.data?.studyDate} group={activeGroup} discipline={activeDiscipline} onDone={() => void journal.refetch()} />
-            </div>
-            <GradeChips student={student} group={activeGroup} discipline={activeDiscipline} onDone={() => void journal.refetch()} />
-            <p className="mt-2 text-sm text-[var(--muted)]">Уже стоит: {marksText(student.marks)}</p>
-          </Glass>
-        ))}
-      </div>
-      <div className="hidden w-full min-w-0 overflow-x-auto md:block">
-        <table className="w-full min-w-[44rem] border-separate border-spacing-0 text-sm">
-          <thead>
-            <tr>
-              <th className="sticky left-0 z-10 w-[22%] bg-[#f4fff8] px-3 py-2 text-left dark:bg-[#10182c]">Студент</th>
-              <th className="w-[14%] px-3 py-2 text-left">{attendanceLabel(journal.data?.studyDate)}</th>
-              <th className="w-[40%] px-3 py-2 text-left">Поставить</th>
-              <th className="w-[24%] px-3 py-2 text-left">Уже стоит</th>
-            </tr>
-          </thead>
-          <tbody className="stagger">
-            {journal.data?.students.map((student) => (
-              <tr key={student.name} className="border-t border-white/40" data-agent-target={`journal-${student.name}`}>
-                <th className="sticky left-0 z-10 whitespace-normal bg-[#f4fff8] px-3 py-2 text-left font-semibold dark:bg-[#10182c]">{student.name}</th>
-                <td className="px-3 py-2">
-                  <AttendanceButton student={student} studyDate={journal.data?.studyDate} group={activeGroup} discipline={activeDiscipline} onDone={() => void journal.refetch()} />
-                </td>
-                <td className="px-3 py-2">
-                  <GradeChips compact student={student} group={activeGroup} discipline={activeDiscipline} onDone={() => void journal.refetch()} />
-                </td>
-                <td className="whitespace-normal px-3 py-2 text-[var(--muted)]">{marksText(student.marks)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
+  return <JournalScreen />;
 }
+
 
 interface QueueItem {
   assignmentId: number;
@@ -275,52 +212,6 @@ export function TeachIssue() {
           {message ? <p className="text-sm">{message}</p> : null}
         </form>
       </Glass>
-    </div>
-  );
-}
-
-function moscowDate() {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow" }).format(new Date());
-}
-
-type JournalStudent = { name: string; marks: { label: string; value: number | null }[]; attendance: { date: string; present: boolean }[] };
-
-function marksText(marks: JournalStudent["marks"]) {
-  return marks.map((mark) => `${mark.label} ${mark.value === 1 && mark.label === "Зачёт" ? "зачёт" : mark.value === 0 ? "незачёт" : mark.value}`).join(", ") || "—";
-}
-
-function attendanceLabel(studyDate?: string) {
-  if (!studyDate) return "Явка";
-  if (studyDate === moscowDate()) return "Явка сегодня";
-  return `Явка ${formatDdMm(studyDate)}`;
-}
-
-function AttendanceButton({ student, studyDate, group, discipline, onDone }: { student: JournalStudent; studyDate?: string; group: string; discipline: string; onDone: () => void }) {
-  const run = useAction();
-  const date = studyDate || moscowDate();
-  const row = student.attendance.find((item) => item.date === date);
-  const present = Boolean(row?.present);
-  const label = !row ? "Не отмечен" : present ? "Был" : "Не был";
-  return (
-    <button type="button" className="btn btn-glass h-11 whitespace-nowrap px-3" aria-pressed={present} onClick={() => void run("teacher_set_attendance", { groupName: group, discipline, date, studentName: student.name, present: !present }).then(onDone)}>
-      {label}
-    </button>
-  );
-}
-
-function GradeChips({ student, group, discipline, onDone, compact = false }: { student: JournalStudent; group: string; discipline: string; onDone: () => void; compact?: boolean }) {
-  const run = useAction();
-  const put = (value: number, label: string, kind: "current" | "credit") => void run("teacher_set_mark", { groupName: group, discipline, studentName: student.name, value, label, kind }).then(onDone);
-  const chips = [
-    ...[2, 3, 4, 5].map((value) => ({ value, label: String(value), kind: "current" as const, mark: "Текущая" })),
-    { value: 1, label: "зач.", kind: "credit" as const, mark: "Зачёт" },
-    { value: 0, label: "нез.", kind: "credit" as const, mark: "Незачёт" },
-  ];
-  return (
-    <div className={compact ? "flex flex-nowrap gap-1" : "mt-2 grid grid-cols-6 gap-1"}>
-      {chips.map((chip) => (
-        <button key={chip.label} type="button" className={compact ? "grade-chip grade-chip-compact" : "grade-chip"} aria-label={`${chip.mark} для ${student.name}`} onClick={() => put(chip.value, chip.mark, chip.kind)}>{chip.label}</button>
-      ))}
     </div>
   );
 }

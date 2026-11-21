@@ -359,6 +359,8 @@ export async function seed() {
 
     await tx.insert(regulations).values(REGULATION_DOCS.map((doc) => ({ slug: doc.slug, title: doc.title, body: doc.body })));
   });
+  const { backfillJournal } = await import("../journal");
+  await backfillJournal();
 }
 
 async function addDiscipline(
