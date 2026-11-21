@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { STATUS_LABEL, type RequestStatus } from "@shared/domain";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
@@ -12,30 +13,49 @@ import { BackLink, Button, Choice, ContestNote, EmptyState, ErrorState, Glass, L
 
 export function NotificationsPage() {
   const notes = useQuery({ queryKey: ["notifications"], queryFn: () => api<{ notifications: Note[] }>("/api/notifications") });
+  const queryClient = useQueryClient();
+  const reduce = useReducedMotion();
   const run = useAction();
+  const [showRead, setShowRead] = useState(false);
   if (notes.isLoading) return <LoadingBlock />;
   if (notes.error) return <ErrorState text="Уведомления не загрузились" onRetry={() => void notes.refetch()} />;
-  const items = notes.data?.notifications ?? [];
+  const items = (notes.data?.notifications ?? []).filter((note) => showRead ? Boolean(note.readAt) : !note.readAt);
+  const mark = (ids: number[] | "all") => {
+    queryClient.setQueryData<{ notifications: Note[] }>(["notifications"], (old) => {
+      if (!old) return old;
+      const now = new Date().toISOString();
+      return { notifications: old.notifications.map((note) => (ids === "all" || ids.includes(note.id)) && !note.readAt ? { ...note, readAt: now } : note) };
+    });
+    void run("mark_notifications_read", ids === "all" ? { all: true } : { ids });
+  };
   return (
     <div className="stagger space-y-3" data-agent-target="notifications">
-      <div className="sticky top-0 z-20 flex min-w-0 flex-wrap items-center justify-between gap-2 bg-[var(--bg,transparent)] py-1">
-        <h1 className="min-w-0">Уведомления</h1>
-        <Button className="h-11 shrink-0 whitespace-nowrap px-4" variant="glass" data-agent-action="notification-read-all" onClick={() => void run("mark_notifications_read", { all: true })}>Прочитать все</Button>
+      <div className="sticky top-0 z-20 space-y-2 bg-[var(--bg,transparent)] py-1">
+        <h1>Уведомления</h1>
+        {showRead || items.length === 0 ? null : <Button className="h-11 w-full whitespace-nowrap" variant="glass" data-agent-action="notification-read-all" onClick={() => mark("all")}>Прочитать все</Button>}
       </div>
-      {items.length === 0 ? <EmptyState title="Тихо" text="Новых объявлений и напоминаний нет." /> : ["Сегодня", "На неделе", "Раньше"].map((bucket) => {
+      <div className="grid grid-cols-2 gap-1 rounded-full bg-black/5 p-1 dark:bg-white/10" role="group" aria-label="Какие уведомления">
+        <button type="button" className={`h-11 whitespace-nowrap rounded-full text-sm font-semibold ${showRead ? "" : "bg-[var(--primary)] text-[var(--primary-ink)]"}`} aria-pressed={!showRead} onClick={() => setShowRead(false)}>Новые</button>
+        <button type="button" className={`h-11 whitespace-nowrap rounded-full text-sm font-semibold ${showRead ? "bg-[var(--primary)] text-[var(--primary-ink)]" : ""}`} aria-pressed={showRead} onClick={() => setShowRead(true)}>Прочитанные</button>
+      </div>
+      {items.length === 0 ? <EmptyState title={showRead ? "Пусто" : "Тихо"} text={showRead ? "Прочитанных уведомлений нет." : "Новых объявлений и напоминаний нет."} /> : ["Сегодня", "На неделе", "Раньше"].map((bucket) => {
         const group = items.filter((note) => noteBucket(note) === bucket);
         if (!group.length) return null;
         return (
           <section key={bucket} className="space-y-2">
             <SectionHeader title={bucket} />
-            {group.map((note) => {
-              const view = noticeView(note);
-              return (
-                <SwipeNote key={note.id} unread={!note.readAt} onRead={() => void run("mark_notifications_read", { ids: [note.id] })}>
-                  <NotificationItem type={view.type} title={view.title} body={view.body} at={note.createdAt ?? new Date().toISOString()} unread={!note.readAt} href={note.href ?? undefined} />
-                </SwipeNote>
-              );
-            })}
+            <AnimatePresence initial={false}>
+              {group.map((note) => {
+                const view = noticeView(note);
+                return (
+                  <motion.div key={note.id} className="overflow-hidden" exit={reduce ? undefined : { opacity: 0, height: 0 }} transition={{ duration: 0.22 }}>
+                    <SwipeNote unread={!note.readAt} onRead={() => mark([note.id])}>
+                      <NotificationItem type={view.type} title={view.title} body={view.body} at={note.createdAt ?? new Date().toISOString()} unread={!note.readAt} href={note.href ?? undefined} />
+                    </SwipeNote>
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
           </section>
         );
       })}
@@ -98,7 +118,7 @@ function noteBucket(note: Note) {
   return age < 7 ? "На неделе" : "Раньше";
 }
 
-interface Note { id: number; title: string; body: string; href: string | null; readAt: string | null; createdAt?: string }
+interface Note { id: number; kind?: string; title: string; body: string; href: string | null; readAt: string | null; createdAt?: string }
 
 export function ProfilePage() {
   const { user } = useAuth();

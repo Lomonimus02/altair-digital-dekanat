@@ -659,6 +659,7 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
     for (const item of targets) {
       await getDb().update(notifications).set({ readAt: now }).where(and(eq(notifications.id, item.id), eq(notifications.userId, user.id)));
     }
+    publish(user.id, { type: "notifications" });
     return {
       summary: `Отметил прочитанными: ${targets.length}.`,
       ui: [{ type: "invalidate", keys: ["notifications", "brief"] }],

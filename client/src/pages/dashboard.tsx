@@ -41,7 +41,7 @@ export function DashboardPage() {
   const openRequests = (requests.data?.requests ?? []).filter((row) => row.status === "ready" || row.status === "submitted" || row.status === "in_progress").slice(0, 3);
   const unread = dedupeNotes((notes.data?.notifications ?? []).filter((note) => !note.readAt)).slice(0, 3);
 
-  const gradeNotes = dedupeNotes(notes.data?.notifications ?? []).filter((note) => noticeView(note).type === "grade").slice(0, 3);
+  const gradeNotes = dedupeNotes(notes.data?.notifications ?? []).filter((note) => !note.readAt && noticeView(note).type === "grade").slice(0, 3);
   return (
     <div className="stagger space-y-4">
       <header className="min-w-0">

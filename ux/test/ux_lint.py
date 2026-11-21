@@ -46,6 +46,45 @@ CHECK = r"""
   return { items, out };
 }
 """
+CHROME = r"""
+() => {
+  const vis = (el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 1 && r.height > 1 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const out = [];
+  for (const input of document.querySelectorAll('input[type="date"]')) if (vis(input)) out.push('native-date');
+  const root = document.querySelector('main') || document.body;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    const text = (node.textContent || '').replace(/\s+/g, '');
+    if (text === '‹' || text === '›' || text === '▸') out.push('stray-arrow:' + text);
+  }
+  const bar = document.querySelector('[data-journal-toolbar]');
+  if (bar && window.innerWidth <= 430) {
+    for (const el of bar.querySelectorAll('input, select, textarea')) if (vis(el) && !el.closest('[role="dialog"]')) out.push('toolbar-control');
+  }
+  for (const row of document.querySelectorAll('[data-toolbar-row]')) {
+    const box = row.getBoundingClientRect();
+    const kids = [...row.children].filter(vis);
+    for (const kid of kids) {
+      const r = kid.getBoundingClientRect();
+      if (r.right > box.right + 1 || r.left < box.left - 1) out.push('row-overflow');
+    }
+    for (let i = 0; i < kids.length; i += 1) for (let j = i + 1; j < kids.length; j += 1) {
+      const a = kids[i].getBoundingClientRect();
+      const b = kids[j].getBoundingClientRect();
+      const overlap = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+      const stack = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+      if (overlap > 2 && stack > 2) out.push('row-overlap');
+    }
+  }
+  return out;
+}
+"""
+
+def chrome(pg, label):
+    for item in pg.evaluate(CHROME):
+        fails.append((label, item))
+
 fails = []; report = {}
 with sync_playwright() as p:
     br = p.chromium.launch(channel="chrome", args=["--no-sandbox", "--disable-dev-shm-usage"])
@@ -62,6 +101,22 @@ with sync_playwright() as p:
                 report[key] = res
                 if not a.legacy and res["items"] == 0 and u not in ("/profile",): fails.append((key, "no [data-ui] items rendered — page not migrated to shared item components"))
                 for o in res["out"]: fails.append((key, f"{o['part']}: {o['v']} «{o['text']}»"))
+                if "journal" in u or u.startswith("/grades") or u.startswith("/notifications"):
+                    for theme in ("light", "dark"):
+                        pg.evaluate("(name) => document.documentElement.classList.toggle('dark', name === 'dark')", theme)
+                        pg.wait_for_timeout(150)
+                        chrome(pg, f"{key} {theme}")
+                        if "journal" in u:
+                            for name, tag in (("Неделя", "week"), ("Месяц", "month"), ("Семестр", "term")):
+                                pg.get_by_role("button", name=name, exact=True).click()
+                                pg.wait_for_timeout(400)
+                                chrome(pg, f"{key} {tag} {theme}")
+                            pg.get_by_role("button", name="Даты", exact=True).click()
+                            pg.wait_for_timeout(300)
+                            chrome(pg, f"{key} range {theme}")
+                            pg.keyboard.press("Escape")
+                            pg.wait_for_timeout(150)
+                    pg.evaluate("() => document.documentElement.classList.remove('dark')")
             ctx.close()
     br.close()
 if a.json: json.dump(report, open(a.json, "w"), ensure_ascii=False, indent=1)

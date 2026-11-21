@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { moscowToday } from "@shared/dates";
 import { WORK_TYPES, formatPercent, journalDateLabel, journalDates, monthBounds, parseJournalFocus, semesterBounds, shiftPeriod, validPoints, weekBounds, workRuleError, type WorkType } from "@shared/journal";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api";
@@ -93,9 +94,12 @@ export function JournalScreen({ readOnly = false, endpoint = "/api/teach/journal
       <h1>Журнал</h1>
       <Choice label="Группа" value={data.groupName} options={[...new Set((groups.length ? groups : [{ groupName: data.groupName }]).map((row) => row.groupName))].map((name) => ({ value: name, label: name }))} onChange={(value) => set({ group: value, discipline: "" })} />
       <Choice label="Предмет" value={data.discipline} options={(groups.filter((row) => row.groupName === data.groupName).length ? groups.filter((row) => row.groupName === data.groupName) : [{ discipline: data.discipline }]).map((row) => ({ value: row.discipline, label: row.discipline }))} onChange={(value) => set({ discipline: value })} />
-      <PeriodBar from={from} to={to} label={data.period.label} onChange={(nextFrom, nextTo) => set({ from: nextFrom, to: nextTo })} />
-      <div className="flex flex-wrap gap-2">
-        <button type="button" className="btn btn-quiet h-11 px-3" data-agent-action="journal-period" onClick={() => set({ mode: mode === "lesson" ? "table" : "lesson" })}>{mode === "lesson" ? "Таблица" : "Урок ▸"}</button>
+      <PeriodBar from={from} to={to} onChange={(nextFrom, nextTo) => set({ from: nextFrom, to: nextTo })} />
+      <div className="grid grid-cols-2 gap-1 rounded-full bg-black/5 p-1 dark:bg-white/10" role="group" aria-label="Вид журнала">
+        <button type="button" className={`h-11 whitespace-nowrap rounded-full px-3 text-sm font-semibold ${mode === "table" ? "bg-[var(--primary)] text-[var(--primary-ink)]" : ""}`} data-agent-action="journal-period" aria-pressed={mode === "table"} onClick={() => set({ mode: "table" })}>Таблица</button>
+        <button type="button" className={`h-11 whitespace-nowrap rounded-full px-3 text-sm font-semibold ${mode === "lesson" ? "bg-[var(--primary)] text-[var(--primary-ink)]" : ""}`} aria-pressed={mode === "lesson"} onClick={() => set({ mode: "lesson" })}>Пары</button>
+      </div>
+      <div className="flex flex-nowrap items-center gap-2">
         {readOnly ? null : <AddColumn group={data.groupName} discipline={data.discipline} scheme={data.scheme} onDone={() => void journal.refetch()} />}
         <GradingDialog group={data.groupName} discipline={data.discipline} scheme={data.scheme} endpoint={endpoint} readOnly={readOnly} onDone={() => void journal.refetch()} />
       </div>
@@ -105,35 +109,129 @@ export function JournalScreen({ readOnly = false, endpoint = "/api/teach/journal
   );
 }
 
-function PeriodBar({ from, to, label, onChange }: { from: string; to: string; label: string; onChange: (from: string, to: string) => void }) {
+const RANGE_MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+
+function periodMode(from: string, to: string) {
+  const term = semesterBounds(from);
+  if (from === term.from && to === term.to) return "term";
+  const month = monthBounds(from);
+  if (from === month.from && to === month.to) return "month";
+  const week = weekBounds(from);
+  if (from === week.from && to === week.to) return "week";
+  return "custom";
+}
+
+function compactRange(from: string, to: string) {
+  const day = (iso: string) => Number(iso.slice(8, 10));
+  const month = (iso: string) => RANGE_MONTHS[Number(iso.slice(5, 7)) - 1];
+  if (from.slice(0, 7) === to.slice(0, 7)) return `${day(from)}–${day(to)}\u00A0${month(from)}`;
+  return `${day(from)}\u00A0${month(from)}–${day(to)}\u00A0${month(to)}`;
+}
+
+function ruInput(iso: string) {
+  return `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
+}
+
+function parseRuInput(value: string) {
+  const match = value.trim().match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (!match) return null;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  const check = new Date(`${iso}T00:00:00Z`);
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() + 1 !== month || check.getUTCDate() !== day) return null;
+  return iso;
+}
+
+function PeriodBar({ from, to, onChange }: { from: string; to: string; onChange: (from: string, to: string) => void }) {
+  const [sheet, setSheet] = useState(false);
+  const [start, setStart] = useState(ruInput(from));
+  const [end, setEnd] = useState(ruInput(to));
+  const [error, setError] = useState("");
+  const mode = periodMode(from, to);
   const shift = (dir: number) => {
     const next = shiftPeriod(from, to, dir);
     onChange(next.from, next.to);
   };
+  const openDates = () => {
+    setStart(ruInput(from));
+    setEnd(ruInput(to));
+    setError("");
+    setSheet(true);
+  };
+  useEffect(() => {
+    if (!sheet) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setSheet(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sheet]);
+  const apply = (event: FormEvent) => {
+    event.preventDefault();
+    const nextFrom = parseRuInput(start);
+    const nextTo = parseRuInput(end);
+    if (!nextFrom || !nextTo || nextFrom > nextTo) { setError("Даты в виде дд.мм.гггг, начало не позже конца"); return; }
+    onChange(nextFrom, nextTo);
+    setSheet(false);
+  };
+  const modes = [
+    ["week", "Неделя", () => { const week = weekBounds(moscowToday()); onChange(week.from, week.to); }],
+    ["month", "Месяц", () => { const month = monthBounds(); onChange(month.from, month.to); }],
+    ["term", "Семестр", () => { const term = semesterBounds(); onChange(term.from, term.to); }],
+    ["custom", "Даты", openDates],
+  ] as const;
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <button type="button" className="btn btn-quiet h-11 px-3" onClick={() => { const week = weekBounds(moscowToday()); onChange(week.from, week.to); }}>Неделя</button>
-      <button type="button" className="btn btn-quiet h-11 px-3" onClick={() => { const month = monthBounds(); onChange(month.from, month.to); }}>Месяц</button>
-      <button type="button" className="btn btn-quiet h-11 px-3" onClick={() => { const term = semesterBounds(); onChange(term.from, term.to); }}>Семестр</button>
-      <button type="button" className="btn btn-quiet h-11 w-11 px-0" aria-label="Раньше" onClick={() => shift(-1)}>‹</button>
-      <span className="text-sm font-semibold">{label}</span>
-      <button type="button" className="btn btn-quiet h-11 w-11 px-0" aria-label="Дальше" onClick={() => shift(1)}>›</button>
-      <label className="text-xs font-semibold">с<input className="field mt-1 block h-11 w-40" type="date" value={from} onChange={(event) => onChange(event.target.value, to)} /></label>
-      <label className="text-xs font-semibold">по<input className="field mt-1 block h-11 w-40" type="date" value={to} onChange={(event) => onChange(from, event.target.value)} /></label>
+    <>
+    <div className="space-y-2" data-journal-toolbar>
+      <div className="grid grid-cols-4 gap-1 rounded-full bg-black/5 p-1 dark:bg-white/10" data-toolbar-row role="group" aria-label="Период">
+        {modes.map(([id, label, pick]) => (
+          <button key={id} type="button" className={`h-11 whitespace-nowrap rounded-full px-1 text-sm font-semibold ${mode === id ? "bg-[var(--primary)] text-[var(--primary-ink)]" : ""}`} aria-pressed={mode === id} onClick={pick}>{label}</button>
+        ))}
+      </div>
+      <div className="flex flex-nowrap items-center gap-2" data-toolbar-row>
+        <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-black/5 dark:bg-white/10" aria-label="Раньше" onClick={() => shift(-1)}><ChevronLeft className="h-5 w-5" aria-hidden /></button>
+        <span className="min-w-0 flex-1 whitespace-nowrap text-center text-sm font-semibold" data-ui="lesson" title={compactRange(from, to)}>{compactRange(from, to)}</span>
+        <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-black/5 dark:bg-white/10" aria-label="Дальше" onClick={() => shift(1)}><ChevronRight className="h-5 w-5" aria-hidden /></button>
+      </div>
     </div>
+      {sheet ? (
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/40" onClick={() => setSheet(false)}>
+          <form role="dialog" aria-label="Свои даты" className="w-full max-w-md rounded-t-3xl bg-[var(--surface-solid)] p-4" style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }} onClick={(event) => event.stopPropagation()} onSubmit={apply}>
+            <p className="font-semibold">Свои даты</p>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <label className="text-sm font-semibold">С<input className="field mt-1" lang="ru" inputMode="numeric" placeholder="дд.мм.гггг" aria-label="С" value={start} onChange={(event) => { setStart(event.target.value); setError(""); }} /></label>
+              <label className="text-sm font-semibold">По<input className="field mt-1" lang="ru" inputMode="numeric" placeholder="дд.мм.гггг" aria-label="По" value={end} onChange={(event) => { setEnd(event.target.value); setError(""); }} /></label>
+            </div>
+            {error ? <p className="mt-2 text-sm text-rose-700" role="alert">{error}</p> : null}
+            <div className="mt-3 flex gap-2">
+              <Button className="h-11 flex-1">Показать</Button>
+              <button type="button" className="btn btn-quiet h-11 px-3" onClick={() => setSheet(false)}>Закрыть</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+    </>
   );
 }
 
 function AddColumn({ group, discipline, scheme, onDone }: { group: string; discipline: string; scheme?: Payload["scheme"]; onDone: () => void }) {
   const run = useAction();
   const [open, setOpen] = useState(false);
-  const [date, setDate] = useState(moscowToday());
+  const [wide, setWide] = useState(() => window.matchMedia("(min-width: 768px)").matches);
+  const [date, setDate] = useState(ruInput(moscowToday()));
   const [workType, setWorkType] = useState<WorkType>("control");
   const [title, setTitle] = useState("Контрольная");
   const initial = scheme?.defaults?.control ?? { maxPoints: 10, weight: WORK_TYPES.control.weight };
   const [maxPoints, setMaxPoints] = useState(String(initial.maxPoints));
   const [weight, setWeight] = useState(String(initial.weight));
   const [error, setError] = useState("");
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 768px)");
+    const sync = () => setWide(media.matches);
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
   const pickType = (next: WorkType) => {
     const found = scheme?.defaults?.[next] ?? { maxPoints: 10, weight: WORK_TYPES[next].weight };
     setWorkType(next);
@@ -141,22 +239,40 @@ function AddColumn({ group, discipline, scheme, onDone }: { group: string; disci
     setMaxPoints(String(found.maxPoints));
     setWeight(String(found.weight));
   };
-  if (!open) return <Button variant="glass" className="h-11 px-3" data-agent-action="journal-add-column" onClick={() => setOpen(true)}>+ Колонка</Button>;
-  return (
-    <form className="flex w-full flex-wrap gap-2" onSubmit={(event) => {
-      event.preventDefault();
-      const problem = workRuleError(maxPoints, weight);
-      if (problem) { setError(problem); return; }
-      void run("teacher_add_journal_column", { groupName: group, discipline, date, workType, title, maxPoints: Number(maxPoints.replace(",", ".")), weight: Number(weight.replace(",", ".")) }).then(() => { setOpen(false); onDone(); }).catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "Не получилось сохранить"));
-    }}>
-      <input className="field h-11 w-36" type="date" value={date} onChange={(event) => setDate(event.target.value)} required />
-      <select className="field h-11" value={workType} onChange={(event) => pickType(event.target.value as WorkType)}>{Object.entries(WORK_TYPES).map(([key, item]) => <option key={key} value={key}>{item.label}</option>)}</select>
-      <input className="field h-11 min-w-40 flex-1" value={title} onChange={(event) => setTitle(event.target.value)} aria-label="Название" />
-      <label className="text-xs font-semibold">Макс.<input className="field mt-1 h-11 w-20" inputMode="numeric" aria-label="Максимум баллов" value={maxPoints} onChange={(event) => { setMaxPoints(event.target.value); setError(""); }} /></label>
-      <label className="text-xs font-semibold">Вес<input className="field mt-1 h-11 w-20" inputMode="decimal" aria-label="Вес" value={weight} onChange={(event) => { setWeight(event.target.value); setError(""); }} /></label>
-      {error ? <p className="w-full text-sm text-rose-700" role="alert">{error}</p> : null}
-      <Button className="h-11 px-3">Добавить</Button>
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const iso = parseRuInput(date);
+    const problem = !iso ? "Дата в виде дд.мм.гггг" : workRuleError(maxPoints, weight);
+    if (problem) { setError(problem); return; }
+    void run("teacher_add_journal_column", { groupName: group, discipline, date: iso, workType, title, maxPoints: Number(maxPoints.replace(",", ".")), weight: Number(weight.replace(",", ".")) }).then(() => { setOpen(false); onDone(); }).catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "Не получилось сохранить"));
+  };
+  const form = (
+    <form className="space-y-3" onSubmit={submit}>
+      <p className="font-semibold">Новая работа</p>
+      <label className="block text-sm font-semibold">Дата<input className="field mt-1" lang="ru" inputMode="numeric" placeholder="дд.мм.гггг" aria-label="Дата работы" value={date} onChange={(event) => { setDate(event.target.value); setError(""); }} required /></label>
+      <label className="block text-sm font-semibold">Тип<select className="field mt-1 h-11" value={workType} onChange={(event) => pickType(event.target.value as WorkType)}>{Object.entries(WORK_TYPES).map(([key, item]) => <option key={key} value={key}>{item.label}</option>)}</select></label>
+      <label className="block text-sm font-semibold">Название<input className="field mt-1" value={title} onChange={(event) => setTitle(event.target.value)} aria-label="Название" /></label>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="text-sm font-semibold">Макс.<input className="field mt-1 h-11" inputMode="numeric" aria-label="Максимум баллов" value={maxPoints} onChange={(event) => { setMaxPoints(event.target.value); setError(""); }} /></label>
+        <label className="text-sm font-semibold">Вес<input className="field mt-1 h-11" inputMode="decimal" aria-label="Вес" value={weight} onChange={(event) => { setWeight(event.target.value); setError(""); }} /></label>
+      </div>
+      {error ? <p className="text-sm text-rose-700" role="alert">{error}</p> : null}
+      <div className="flex gap-2">
+        <Button className="h-11 flex-1">Добавить</Button>
+        <button type="button" className="btn btn-quiet h-11 px-3" onClick={() => setOpen(false)}>Закрыть</button>
+      </div>
     </form>
+  );
+  return (
+    <div className="relative">
+      <Button variant="glass" className="h-11 whitespace-nowrap px-3" data-agent-action="journal-add-column" onClick={() => setOpen(true)}>+ Работа</Button>
+      {open && wide ? <div role="dialog" aria-label="Новая работа" className="absolute right-0 z-40 mt-2 w-80 rounded-3xl bg-[var(--surface-solid)] p-4 shadow-2xl">{form}</div> : null}
+      {open && !wide ? (
+        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/40" onClick={() => setOpen(false)}>
+          <div role="dialog" aria-label="Новая работа" className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-[var(--surface-solid)] p-4" style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }} onClick={(event) => event.stopPropagation()}>{form}</div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -239,7 +355,7 @@ function ColumnHead({ column, lesson, today, readOnly, group, discipline, cells,
     <th className={`px-1 py-1 ${today ? "outline outline-2 outline-[var(--primary)]" : ""} ${lesson?.cancelled ? "opacity-50" : ""}`}>
       <button type="button" className="block min-h-11 text-left" data-agent-action="journal-column" onClick={() => { onActivate?.(); setOpen(true); }}>
         <span className="block text-[11px]">{column.date.slice(8, 10)}.{column.date.slice(5, 7)}</span>
-        <span className={`mt-1 inline-flex gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] ${tone}`}><span>{column.short}</span><span>{column.maxPoints ?? column.maxScore}</span><span>вес {column.weight}</span></span>
+        <span className={`mt-1 inline-flex gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] ${tone}`}><span>{column.short}</span><span>{column.maxPoints ?? column.maxScore}</span><span>вес {Number(column.weight).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}</span></span>
         <span className="mt-1 block max-w-[7.5rem] truncate text-[10px] font-normal text-[var(--muted)]" title={caption}>{column.title}</span>
       </button>
       {open ? <ColumnDialog column={column} lesson={lesson} group={group} discipline={discipline} cells={cells} readOnly={readOnly} onClose={() => setOpen(false)} onDone={onDone} /> : null}
@@ -440,7 +556,7 @@ function GradingDialog({ group, discipline, scheme, endpoint, readOnly, onDone }
   const [maxPoints, setMaxPoints] = useState(String(current.maxPoints));
   const [weight, setWeight] = useState(String(current.weight));
   const [warn, setWarn] = useState("");
-  if (!open) return <Button variant="glass" className="h-11 px-3" onClick={() => setOpen(true)}>Система оценивания</Button>;
+  if (!open) return <Button variant="glass" className="h-11 whitespace-nowrap px-3" onClick={() => setOpen(true)}>Пороги</Button>;
   const save = (event: FormEvent) => {
     event.preventDefault();
     if (readOnly) return;

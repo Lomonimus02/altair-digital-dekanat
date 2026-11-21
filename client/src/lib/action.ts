@@ -12,7 +12,7 @@ export function useAction() {
     const response = await api<T>("/api/actions", { method: "POST", body: JSON.stringify({ action, args }) });
     applyDirectives(response.ui, navigate, queryClient);
     if (response.undoOffer) {
-      toast(response.summary ?? "Готово", {
+      toast(action === "mark_notifications_read" ? "Прочитано" : (response.summary ?? "Готово"), {
         action: {
           label: "Отменить",
           onClick: () => void api("/api/actions", { method: "POST", body: JSON.stringify({ action: "undo", args: { auditId: response.undoOffer!.auditId } }) }).then((next) => {
