@@ -7,6 +7,14 @@ import { acceptSession, api, ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { ContestNote, Mark } from "../components/ui";
 
+/** Только вымышленные демо-аккаунты конкурса; настоящих логинов здесь нет. */
+const DEMO = [
+  ["Студент · БИ-3-26-04", "sorokin.mo", "Altair-student-31"],
+  ["Студентка · ЮР-1-26-02", "volkova.as", "Altair-student-17"],
+  ["Учебный офис", "lebedeva.ip", "Altair-staff-204"],
+  ["Преподаватель", "orlov.pn", "Altair-teacher-58"],
+] as const;
+
 function homeFor(role: string) {
   if (role === "staff") return "/staff";
   if (role === "teacher") return "/teach";
@@ -51,7 +59,7 @@ export function LoginPage() {
           <div className="flex flex-col items-center text-center">
             <Mark />
             <h1 className="mt-4 text-2xl font-display">Вход в систему</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">Введите данные, которые выдал учебный офис</p>
+            <p className="mt-1 text-sm text-[var(--muted)]">Альтаир — цифровой деканат: расписание, оценки, справки и новости в одном месте</p>
           </div>
           <div>
             <label htmlFor="login" className="mb-1 block text-sm font-semibold">Логин</label>
@@ -66,18 +74,20 @@ export function LoginPage() {
               </button>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {[
-              ["Студент", "sorokin.mo", "Altair-student-31"],
-              ["Ещё студент", "volkova.as", "Altair-student-17"],
-              ["Сотрудник", "lebedeva.ip", "Altair-staff-204"],
-              ["Преподаватель", "orlov.pn", "Altair-teacher-58"],
-            ].map(([label, account, secret]) => (
-              <button key={account} type="button" className="btn btn-glass h-11 px-3 text-sm" onClick={() => { setLogin(account); setPassword(secret); }}>
-                {label}
-              </button>
-            ))}
-          </div>
+          <section aria-labelledby="demo-title" className="rounded-2xl bg-black/[0.04] p-3 dark:bg-white/[0.06]">
+            <p id="demo-title" className="text-sm font-semibold">Тестовые аккаунты</p>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">Нажмите, чтобы подставить логин и пароль.</p>
+            <ul className="mt-2 grid gap-1.5">
+              {DEMO.map(([label, account, secret]) => (
+                <li key={account}>
+                  <button type="button" className="flex min-h-11 w-full items-center justify-between gap-2 rounded-xl px-3 py-1.5 text-left text-sm hover:bg-black/5 dark:hover:bg-white/10" aria-label={`${label}: подставить ${account}`} onClick={() => { setLogin(account); setPassword(secret); }}>
+                    <span className="min-w-0 font-semibold">{label}</span>
+                    <span className="shrink-0 text-right font-mono text-xs leading-tight text-[var(--muted)]"><span className="block whitespace-nowrap">{account}</span><span className="block whitespace-nowrap">{secret}</span></span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
           {error ? <p className="text-sm text-[var(--risk-high-fg)]">{error}</p> : null}
           <button type="submit" className="btn btn-primary w-full" disabled={pending}>
             {pending ? "Входим…" : "Войти"}

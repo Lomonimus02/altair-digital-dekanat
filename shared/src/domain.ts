@@ -3,6 +3,16 @@ export const UNIVERSITY = "Академия «Альтаир»";
 export const CONTEST_NOTE =
   "Учебный концепт конкурса «Цифровой деканат будущего». Академия «Альтаир» вымышлена и не является официальным сервисом какого-либо университета.";
 
+/** Допустимые переходы статуса заявки. Офис может сразу отметить справку готовой. */
+export const REQUEST_NEXT: Record<string, ("in_progress" | "ready" | "issued" | "rejected" | "withdrawn")[]> = {
+  submitted: ["in_progress", "ready", "issued", "rejected", "withdrawn"],
+  in_progress: ["ready", "issued", "rejected", "withdrawn"],
+  ready: ["issued", "rejected"],
+  issued: [],
+  rejected: [],
+  withdrawn: [],
+};
+
 export const REQUEST_KIND_IDS = [
   "study_certificate",
   "period_certificate",

@@ -12,7 +12,8 @@ import { Choice, EmptyState, ErrorState, Glass, LoadingBlock, Pill } from "../co
 interface Item {
   id: number;
   name: string;
-  controlForm: "exam" | "credit";
+  controlForm: "exam" | "credit" | "diff_credit" | string;
+  sessionDate?: string | null;
   average: number | null;
   automatic: "5" | "4" | "pass" | null;
   finalText: string | null;
@@ -95,9 +96,10 @@ export function GradesPage() {
         <h1>Успеваемость</h1>
         <p className="text-sm text-[var(--muted)]">Баллы, процент и пороги предмета.</p>
       </div>
+      <HowAmI items={grades.data.items} average={average} />
       <Choice label="Семестр" value={grades.data.semester} options={grades.data.semesters.map((item) => ({ value: item.id, label: item.label }))} onChange={(value) => setParams({ semester: value, view })} />
       <div className="flex flex-wrap gap-2" data-agent-action="grades-view">
-        {[["table", "Таблица"], ["list", "Список"], ["summary", "Сводка"]].map(([id, label]) => (
+        {[["table", "Таблица"], ["list", "Список"], ["session", "Сессия"], ["summary", "Сводка"]].map(([id, label]) => (
           <button key={id} type="button" className={`btn h-11 px-3 ${view === id ? "btn-primary" : "btn-quiet"}`} onClick={() => setParams({ semester: grades.data!.semester, view: id, subject })}>{label}</button>
         ))}
       </div>
@@ -105,7 +107,8 @@ export function GradesPage() {
         <button type="button" className="btn btn-quiet h-11 px-3" onClick={() => { const month = monthBounds(); setParams({ semester: grades.data!.semester, view, subject, from: month.from, to: month.to }); }}>Месяц</button>
         <button type="button" className="btn btn-quiet h-11 px-3" onClick={() => { const term = semesterBounds(); setParams({ semester: grades.data!.semester, view, subject, from: term.from, to: term.to }); }}>Семестр</button>
       </div>
-      {view === "summary" ? null : <GradeTable mode={view === "list" ? "list" : "table"} semester={grades.data.semester} from={from} to={to} subject={subject} focus={params.get("focus") ?? ""} />}
+      {view === "session" ? <SessionView items={grades.data.items} /> : null}
+      {view === "summary" || view === "session" ? null : <GradeTable mode={view === "list" ? "list" : "table"} semester={grades.data.semester} from={from} to={to} subject={subject} focus={params.get("focus") ?? ""} />}
       <div className="chip-row -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
         <button type="button" className="btn btn-quiet h-11 shrink-0 px-3" data-agent-action="grades-open" onClick={() => setParams({ semester: grades.data!.semester })}>Все</button>
         {grades.data.items.map((item) => (
@@ -159,6 +162,70 @@ export function GradesPage() {
           );
         })}</div>
       )}
+    </div>
+  );
+}
+
+const CONTROL_RU: Record<string, string> = { exam: "Экзамен", credit: "Зачёт", diff_credit: "Дифф. зачёт" };
+
+function sessionState(item: Item): { label: string; tone: "low" | "mid" | "high" } {
+  if (item.finalText) return { label: `Итог: ${item.finalText}`, tone: "low" };
+  if (item.automatic) return { label: item.automatic === "5" ? "Автомат «отлично»" : item.automatic === "4" ? "Автомат «хорошо»" : "Автомат «зачтено»", tone: "low" };
+  if (item.risk === "high") return { label: "Риск — нужен план", tone: "high" };
+  if (item.risk === "medium") return { label: "Допуск, нужно добрать", tone: "mid" };
+  return { label: "Допуск", tone: "low" };
+}
+
+/** «Как у меня дела»: одна фраза, понятная без таблиц. */
+function HowAmI({ items, average }: { items: Item[]; average: number | null }) {
+  if (!items.length) return null;
+  const risky = items.filter((item) => item.risk === "high");
+  const autos = items.filter((item) => item.automatic && !item.finalText);
+  const closed = items.filter((item) => item.finalText);
+  const next = items.filter((item) => item.sessionDate && (item.daysLeft ?? -1) >= 0 && !item.finalText).sort((a, b) => String(a.sessionDate).localeCompare(String(b.sessionDate)))[0];
+  const mood = risky.length ? "Есть над чем поработать" : average != null && average >= 85 ? "Всё отлично" : "Всё под контролем";
+  return (
+    <section className="liquid-glass" data-agent-target="grades-summary" aria-label="Как у меня дела">
+      <div className="glass-pad p-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Как у меня дела</p>
+        <p className="mt-1 text-lg font-semibold">{mood}{average != null ? ` · средний ${formatPercent(average)}` : ""}</p>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          {[
+            autos.length ? `автоматов: ${autos.length}` : null,
+            closed.length ? `закрыто: ${closed.length}` : null,
+            risky.length ? `в зоне риска: ${risky.map((item) => item.name).join(", ")}` : "долгов нет",
+            next ? `ближайшая аттестация — ${next.name}, ${fmtDate(String(next.sessionDate), "day")}${next.daysLeft === 0 ? " (сегодня)" : next.daysLeft != null ? ` (через ${next.daysLeft} дн.)` : ""}` : null,
+          ].filter(Boolean).join(" · ")}
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function SessionView({ items }: { items: Item[] }) {
+  if (!items.length) return <EmptyState title="Сессии пока нет" text="Когда появятся дисциплины с аттестацией, они будут здесь." />;
+  const rows = [...items].sort((a, b) => String(a.sessionDate ?? "9999").localeCompare(String(b.sessionDate ?? "9999")));
+  return (
+    <div className="space-y-2" data-agent-target="grades-session">
+      {rows.map((item) => {
+        const state = sessionState(item);
+        const past = (item.daysLeft ?? 0) < 0;
+        return (
+          <Glass key={item.id} target={`session-${item.id}`}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="t-title item-title" title={item.name}>{item.name}</h2>
+                <p className="mt-0.5 text-sm text-[var(--muted)]">
+                  {CONTROL_RU[item.controlForm] ?? "Аттестация"}
+                  {item.sessionDate ? ` · ${fmtDate(item.sessionDate, "day")}${item.finalText ? "" : past ? " (прошла)" : item.daysLeft === 0 ? " · сегодня" : item.daysLeft != null ? ` · через ${item.daysLeft} дн.` : ""}` : ""}
+                </p>
+                <p className="mt-1 text-sm">Текущий итог: {item.average == null ? "—" : formatPercent(item.average)}</p>
+              </div>
+              <Pill tone={state.tone}>{state.label}</Pill>
+            </div>
+          </Glass>
+        );
+      })}
     </div>
   );
 }

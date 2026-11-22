@@ -7,6 +7,7 @@ import {
   defaultPurpose,
   kindMeta,
   STATUS_LABEL,
+  REQUEST_NEXT,
   type AnswerCard,
   type ChoiceChip,
   type Citation,
@@ -129,14 +130,7 @@ export interface PerformResult extends Outcome {
   fill?: Record<string, string>;
 }
 
-const NEXT: Record<string, RequestStatus[]> = {
-  submitted: ["in_progress", "rejected", "withdrawn"],
-  in_progress: ["ready", "issued", "rejected", "withdrawn"],
-  ready: ["issued", "rejected"],
-  issued: [],
-  rejected: [],
-  withdrawn: [],
-};
+const NEXT: Record<string, RequestStatus[]> = REQUEST_NEXT as Record<string, RequestStatus[]>;
 
 export async function perform(
   user: PublicUser,

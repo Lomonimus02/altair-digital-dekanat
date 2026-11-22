@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { moscowToday } from "@shared/dates";
-import { STATUS_LABEL, type RequestStatus } from "@shared/domain";
+import { REQUEST_NEXT, STATUS_LABEL, type RequestStatus } from "@shared/domain";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
@@ -9,7 +9,7 @@ import { useAction } from "../lib/action";
 import { useAuth } from "../lib/auth";
 import { ModelControls } from "../components/agent-panel";
 import { Fact, NotificationItem, RequestItem, SectionHeader } from "../components/items";
-import { glueLast, noticeView } from "../lib/format";
+import { fmtDate, glueLast, noticeView } from "../lib/format";
 import { BackLink, Button, Choice, ContestNote, EmptyState, ErrorState, Glass, LoadingBlock, Mark } from "../components/ui";
 
 export function NotificationsPage() {
@@ -18,9 +18,11 @@ export function NotificationsPage() {
   const reduce = useReducedMotion();
   const run = useAction();
   const [showRead, setShowRead] = useState(false);
+  const [kind, setKind] = useState("all");
+  const { user } = useAuth();
   if (notes.isLoading) return <LoadingBlock />;
   if (notes.error) return <ErrorState text="Уведомления не загрузились" onRetry={() => void notes.refetch()} />;
-  const items = (notes.data?.notifications ?? []).filter((note) => showRead ? Boolean(note.readAt) : !note.readAt);
+  const items = (notes.data?.notifications ?? []).filter((note) => showRead ? Boolean(note.readAt) : !note.readAt).filter((note) => kind === "all" || noticeKind(note) === kind);
   const mark = (ids: number[] | "all") => {
     queryClient.setQueryData<{ notifications: Note[] }>(["notifications"], (old) => {
       if (!old) return old;
@@ -38,6 +40,12 @@ export function NotificationsPage() {
       <div className="grid grid-cols-2 gap-1 rounded-full bg-black/5 p-1 dark:bg-white/10" role="group" aria-label="Какие уведомления">
         <button type="button" className={`h-11 whitespace-nowrap rounded-full text-sm font-semibold ${showRead ? "" : "bg-[var(--primary)] text-[var(--primary-ink)]"}`} aria-pressed={!showRead} onClick={() => setShowRead(false)}>Новые</button>
         <button type="button" className={`h-11 whitespace-nowrap rounded-full text-sm font-semibold ${showRead ? "bg-[var(--primary)] text-[var(--primary-ink)]" : ""}`} aria-pressed={showRead} onClick={() => setShowRead(true)}>Прочитанные</button>
+      </div>
+      {user?.role === "student" ? <Upcoming /> : null}
+      <div className="chip-row -mx-1 flex gap-2 overflow-x-auto px-1 pb-1" role="group" aria-label="Тип уведомлений">
+        {NOTICE_KINDS.map(([id, label]) => (
+          <button key={id} type="button" aria-pressed={kind === id} className={`btn h-11 shrink-0 px-3 ${kind === id ? "btn-primary" : "btn-quiet"}`} onClick={() => setKind(id)}>{label}</button>
+        ))}
       </div>
       {items.length === 0 ? <EmptyState title={showRead ? "Пусто" : "Тихо"} text={showRead ? "Прочитанных уведомлений нет." : "Новых объявлений и напоминаний нет."} /> : ["Сегодня", "На неделе", "Раньше"].map((bucket) => {
         const group = items.filter((note) => noteBucket(note) === bucket);
@@ -60,6 +68,58 @@ export function NotificationsPage() {
           </section>
         );
       })}
+    </div>
+  );
+}
+
+const NOTICE_KINDS = [["all", "Все"], ["announcement", "Объявления"], ["deadline", "Сроки и задания"], ["schedule", "Расписание"], ["grade", "Оценки"], ["request", "Заявки"]] as const;
+
+function noticeKind(note: Note) {
+  const type = noticeView(note).type;
+  if (type === "work" || type === "returned") return "deadline";
+  return type;
+}
+
+/** Напоминания о сроках и свежие объявления деканата — сверху, даже если уведомления прочитаны. */
+function Upcoming() {
+  const homework = useQuery({ queryKey: ["homework"], queryFn: () => api<{ homework: { id: number; title: string; discipline: string; deadline: string; submission: { status: string } | null }[] }>("/api/homework") });
+  const news = useQuery({ queryKey: ["announcements"], queryFn: () => api<{ announcements: { id: number; title: string; body: string; createdAt?: string }[] }>("/api/announcements") });
+  const today = moscowToday();
+  const soon = (homework.data?.homework ?? [])
+    .filter((work) => work.deadline >= today && (!work.submission || ["not_started", "in_progress", "returned"].includes(work.submission.status)))
+    .map((work) => ({ ...work, days: Math.round((Date.parse(work.deadline) - Date.parse(today)) / 86_400_000) }))
+    .filter((work) => work.days <= 7)
+    .sort((a, b) => a.deadline.localeCompare(b.deadline))
+    .slice(0, 3);
+  const latest = (news.data?.announcements ?? []).slice(0, 2);
+  if (!soon.length && !latest.length) return null;
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      {soon.length ? (
+        <Glass target="notice-deadlines">
+          <p className="text-sm font-semibold">Скоро сроки</p>
+          <ul className="mt-2 space-y-1">
+            {soon.map((work) => (
+              <li key={work.id}>
+                <Link to={`/homework/${work.id}`} className="flex min-h-11 items-center justify-between gap-2 rounded-xl px-2 text-sm hover:bg-black/5 dark:hover:bg-white/10">
+                  <span className="min-w-0 truncate">{work.title}<span className="block text-xs text-[var(--muted)]">{work.discipline}</span></span>
+                  <span className={`shrink-0 text-xs font-semibold ${work.days <= 1 ? "text-[var(--risk-high-fg)]" : "text-[var(--muted)]"}`}>{work.days === 0 ? "сегодня" : work.days === 1 ? "завтра" : `${fmtDate(work.deadline, "short")} · ${work.days} дн.`}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Glass>
+      ) : null}
+      {latest.length ? (
+        <Glass target="notice-news">
+          <p className="text-sm font-semibold">Объявления деканата</p>
+          <ul className="mt-2 space-y-2">
+            {latest.map((item) => (
+              <li key={item.id} className="text-sm"><p className="font-semibold">{item.title}</p><p className="line-clamp-2 text-[var(--muted)]">{item.body}</p></li>
+            ))}
+          </ul>
+        </Glass>
+      ) : null}
     </div>
   );
 }
@@ -127,7 +187,7 @@ export function ProfilePage() {
   if (!user) return null;
   const rows = [
     ["ФИО", user.fullName],
-    ["Институт", user.institute],
+    ["Факультет (институт)", user.institute],
     ["Направление", user.direction],
     ["Курс", user.course ? String(user.course) : null],
     ["Группа", user.groupName],
@@ -278,20 +338,24 @@ export function StaffRequestPage() {
   const { id = "" } = useParams();
   const run = useAction();
   const [comment, setComment] = useState("");
-  const [status, setStatus] = useState("in_progress");
+  const [picked, setPicked] = useState("");
   const [error, setError] = useState("");
   const detail = useQuery({
     queryKey: ["staff", id],
-    queryFn: () => api<{ request: { id: number; title: string; purpose: string | null; body: string | null; status: RequestStatus }; student: { fullName: string; groupName: string | null } | null; events: { id: number; status: RequestStatus; comment: string | null }[]; triage: { category: string; summary: string; suggestedReply: string; suggestedStatus: string } }>(`/api/staff/requests/${id}`),
+    queryFn: () => api<{ request: { id: number; title: string; purpose: string | null; body: string | null; status: RequestStatus; createdAt: string }; student: { fullName: string; groupName: string | null } | null; events: { id: number; status: RequestStatus; comment: string | null }[]; triage: { category: string; summary: string; suggestedReply: string; suggestedStatus: string } }>(`/api/staff/requests/${id}`),
   });
   if (detail.isLoading) return <LoadingBlock />;
   if (detail.error || !detail.data) return <ErrorState text="Заявка недоступна" />;
   const triage = detail.data.triage;
+  const allowed = STAFF_CHOICES.filter((option) => (REQUEST_NEXT[detail.data.request.status] ?? []).includes(option.value as never));
+  const suggested = allowed.find((option) => option.value === triage.suggestedStatus)?.value;
+  const status = allowed.some((option) => option.value === picked) ? picked : suggested ?? allowed[0]?.value ?? "";
+  const setStatus = setPicked;
   return (
     <div className="space-y-4" data-agent-target={`staff-request-${id}`}>
       <BackLink to="/staff" />
       <h1 className="t-page item-title">{detail.data.request.title}</h1>
-      <RequestItem href={`/staff/requests/${id}`} number={detail.data.request.id} title={detail.data.request.title} statusLabel={STATUS_LABEL[detail.data.request.status]} createdAt="2026-11-18" student={detail.data.student?.fullName} group={detail.data.student?.groupName ?? undefined} purpose={detail.data.request.purpose ?? undefined} />
+      <RequestItem href={`/staff/requests/${id}`} number={detail.data.request.id} title={detail.data.request.title} statusLabel={STATUS_LABEL[detail.data.request.status]} createdAt={detail.data.request.createdAt} student={detail.data.student?.fullName} group={detail.data.student?.groupName ?? undefined} purpose={detail.data.request.purpose ?? undefined} />
       <Glass>
         <Fact label="Студент" value={detail.data.student?.fullName ?? "Студент"} />
         <Fact label="Группа" value={detail.data.student?.groupName ?? "Группа"} />
@@ -303,13 +367,13 @@ export function StaffRequestPage() {
           Комментарий к ответу
           <textarea id={`staff-reply-${id}`} className="field mt-1 min-h-28 py-3" value={comment || triage.suggestedReply} onChange={(event) => setComment(event.target.value)} />
         </label>
-        <div className="mt-3 space-y-3">
-          <Choice label="Статус" value={status} options={[{ value: "in_progress", label: "В работе" }, { value: "ready", label: "Готова" }, { value: "issued", label: "Выдана" }, { value: "rejected", label: "Отклонена" }]} onChange={setStatus} />
+        {allowed.length === 0 ? <p className="mt-3 text-sm text-[var(--muted)]">Заявка закрыта: статус «{STATUS_LABEL_SAFE[detail.data.request.status]}» больше не меняется.</p> : <div className="mt-3 space-y-3">
+          <Choice label="Статус" value={status} options={allowed} onChange={setStatus} />
           <Button onClick={() => {
             setError("");
             void run("staff_set_status", { requestId: Number(id), status, comment: comment || triage.suggestedReply }).catch((err: Error) => setError(err.message));
           }}>Сохранить статус</Button>
-        </div>
+        </div>}
         {error ? <p className="mt-2 text-sm text-[var(--risk-high-fg)]">{error}</p> : null}
         <p className="mt-2 text-xs text-[var(--muted)]">Предложенный статус: {STATUS_LABEL[triage.suggestedStatus as RequestStatus] ?? triage.suggestedStatus}</p>
       </Glass>
@@ -323,6 +387,8 @@ export function StaffRequestPage() {
     </div>
   );
 }
+
+const STAFF_CHOICES = [{ value: "in_progress", label: "В работе" }, { value: "ready", label: "Готова" }, { value: "issued", label: "Выдана" }, { value: "rejected", label: "Отклонена" }];
 
 const STATUS_LABEL_SAFE: Record<string, string> = {
   submitted: "Подана",

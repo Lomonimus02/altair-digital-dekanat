@@ -380,6 +380,7 @@ function UserChip({ onLogout }: { onLogout: () => void }) {
             <LogOut className="h-4 w-4" />
           </button>
         </div>
+        <ContestNote className="mt-2 border-t border-black/5 pt-2 dark:border-white/10" />
       </div>
     </div>
   );

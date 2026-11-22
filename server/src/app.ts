@@ -166,7 +166,7 @@ export async function buildApp() {
     const ip = request.ip || "local";
     const body = loginSchema.parse(request.body);
     const key = `${ip}:${body.login.toLowerCase()}`;
-    if (!allow(key, config.loginLimit, 10 * 60 * 1000)) {
+    if (!allow(key, config.loginLimit, 10 * 60 * 1000) || !allow(`ip:${ip}`, config.loginLimit * 8, 10 * 60 * 1000)) {
       return reply.code(429).send({ error: "rate_limited", message: "Слишком много попыток. Подождите и попробуйте снова." });
     }
     const row = await findUserByLogin(body.login);

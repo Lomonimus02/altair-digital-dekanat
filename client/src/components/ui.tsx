@@ -29,8 +29,8 @@ export function BackLink({ to }: { to: string }) {
 export function ContestNote({ className = "" }: { className?: string }) {
   return (
     <div className={className}>
-      <p className="text-xs leading-relaxed text-[var(--muted)]">Учебный концепт «Цифровой деканат».</p>
-      <p className="text-xs leading-relaxed text-[var(--muted)]">«Альтаир» вымышлен, это не вуз.</p>
+      <p className="text-xs leading-relaxed text-[var(--muted)]"><strong className="font-semibold">Концепт для конкурса «Цифровой деканат будущего»</strong> — не официальный сервис вуза.</p>
+      <p className="text-xs leading-relaxed text-[var(--muted)]">Академия «Альтаир», люди, оценки и заявки вымышлены.</p>
     </div>
   );
 }

@@ -61,12 +61,13 @@ export function SchedulePage() {
   const weekEnd = schedule.data.days.at(-1)?.date ?? focus;
   const look = scheduleLook(schedule.data.today, weekStart, weekEnd);
   const focusDay = schedule.data.days[index];
+  const nearDay = schedule.data.days.find((day) => day.date >= schedule.data!.today) ?? focusDay;
   return (
     <div className="stagger space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <h1>Расписание</h1>
-          {look === "near" && focusDay ? <p className="text-sm text-[var(--muted)]">Сегодня пар нет — ближайшие: {shortDay(focusDay.weekday).toLowerCase()} {formatDdMm(focusDay.date)}</p> : null}
+          {look === "near" && nearDay ? <p className="text-sm text-[var(--muted)]">Сегодня пар нет — ближайшие: {shortDay(nearDay.weekday).toLowerCase()} {formatDdMm(nearDay.date)}</p> : null}
           {look === "past" && focusDay ? <p className="text-sm text-[var(--muted)]">Прошедшая неделя: {shortDay(focusDay.weekday).toLowerCase()} {formatDdMm(focusDay.date)}</p> : null}
           {look === "later" && focusDay ? <p className="text-sm text-[var(--muted)]">Вы смотрите {shortDay(focusDay.weekday).toLowerCase()} {formatDdMm(focusDay.date)}</p> : null}
         </div>
