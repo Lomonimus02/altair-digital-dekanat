@@ -11,7 +11,7 @@ const LAW_HINTS = ["Что у меня завтра?", "Что мне сдать
 const HOMEWORK_HINTS = ["Что просрочено?", "Что сдать на этой неделе?", "Какие у меня долги", "Сдай задание по базам данных", "Напомни о дедлайне по базам данных"];
 const LAW_HOMEWORK_HINTS = ["Что просрочено?", "Что сдать на этой неделе?", "Какие у меня долги", "Сдай задание по информационным технологиям", "Напомни о дедлайне по информационным технологиям"];
 const STAFF_HINTS = ["Разбери входящие", "Статус заявки на справку", "Опубликуй объявление: Приём справок сегодня до 17:00", "Какие заявки ждут меня"];
-const TEACHER_HINTS = ["Покажи непроверенные работы", "Что у меня сегодня?", "Отметь отсутствующих", "Поставь 5 Сорокину за лабу", "Выдай задание по базам данных на пятницу", "Верни работу Сорокина на доработку"];
+const TEACHER_HINTS = ["Покажи непроверенные работы", "Что у меня сегодня?", "Отметь отсутствующих", "Поставь всем максимум за последнюю пару", "Выдай задание по базам данных на пятницу", "Верни работу Сорокина на доработку"];
 
 export function AgentPanel({ variant = "dock", chrome = true, onlyConfirm = false }: { variant?: "dock" | "sheet"; chrome?: boolean; onlyConfirm?: boolean }) {
   const agent = useAgent();
@@ -80,20 +80,7 @@ export function AgentPanel({ variant = "dock", chrome = true, onlyConfirm = fals
         ) : null}
         {(onlyConfirm ? agent.messages.filter((message) => message.confirm && !message.confirmState).slice(-1) : agent.messages).map((message) => onlyConfirm && message.confirm ? (
           <div key={message.id} className="px-4 pb-3 pt-3">
-            <p className="pr-10 font-semibold">{message.confirm.title}</p>
-            <p className="mt-1 text-xs text-[var(--muted)]">{message.confirm.summary}</p>
-            <dl className="mt-2 space-y-0.5">
-              {message.confirm.fields.map((field) => (
-                <div key={field.label} className="flex items-baseline justify-between gap-3">
-                  <dt className="text-[11px] uppercase text-[var(--muted)]">{field.label}</dt>
-                  <dd className="text-right">{field.value}</dd>
-                </div>
-              ))}
-            </dl>
-            <div className="mt-3 flex gap-2">
-              <Button onClick={() => void agent.confirm(message.confirm!.pendingId)} disabled={agent.busy}>Подтвердить</Button>
-              <Button variant="glass" onClick={() => void agent.reject(message.confirm!.pendingId)}>Не сейчас</Button>
-            </div>
+            <ConfirmBody card={message.confirm} compact busy={agent.busy} onConfirm={() => void agent.confirm(message.confirm!.pendingId)} onReject={() => void agent.reject(message.confirm!.pendingId)} onAlt={(alt) => void agent.reject(message.confirm!.pendingId).then(() => agent.clarify(alt))} />
           </div>
         ) : (
           <article key={message.id} className={message.role === "user" ? "ml-8" : "mr-2"}>
@@ -104,7 +91,7 @@ export function AgentPanel({ variant = "dock", chrome = true, onlyConfirm = fals
                   <ol className="mb-2 space-y-1">
                     {message.steps.map((step, index) => (
                       <li key={index} className={step.status === "error" ? "text-[var(--risk-high-fg)]" : "text-[var(--muted)]"}>
-                        {step.label.replace("…", step.status === "error" ? " — не вышло" : step.status === "skipped" ? " — жду" : "")}
+                        {step.label.replace("…", step.status === "error" ? " — не получилось" : step.status === "skipped" ? " — жду" : "")}
                       </li>
                     ))}
                   </ol>
@@ -131,30 +118,12 @@ export function AgentPanel({ variant = "dock", chrome = true, onlyConfirm = fals
                 ))}
                 {message.confirm ? (
                   <div className="mt-3 rounded-2xl bg-white/50 p-3 dark:bg-black/20">
-                    <p className="font-semibold">{message.confirm.title}</p>
-                    <p className="mt-1 text-xs text-[var(--muted)]">{message.confirm.summary}</p>
-                    <dl className="mt-2 space-y-1">
-                      {message.confirm.fields.map((field) => (
-                        <div key={field.label}>
-                          <dt className="text-[11px] uppercase text-[var(--muted)]">{field.label}</dt>
-                          <dd>{field.value}</dd>
-                        </div>
-                      ))}
-                    </dl>
+                    <ConfirmBody card={message.confirm} busy={agent.busy} stale={Boolean(message.confirmState)} onConfirm={() => void agent.confirm(message.confirm!.pendingId)} onReject={() => void agent.reject(message.confirm!.pendingId)} onAlt={(alt) => void agent.reject(message.confirm!.pendingId).then(() => agent.clarify(alt))} />
                     {message.confirmState ? (
                       <p className="mt-3 inline-flex rounded-full bg-black/5 px-3 py-1 text-xs font-semibold text-[var(--muted)] dark:bg-white/10" data-card-state={message.confirmState}>
                         {message.confirmState === "done" ? "Выполнено или отменено ранее" : "Устарело — повторите просьбу"}
                       </p>
-                    ) : (
-                      <div className="mt-3 flex gap-2">
-                        <Button onClick={() => void agent.confirm(message.confirm!.pendingId)} disabled={agent.busy}>
-                          Подтвердить
-                        </Button>
-                        <Button variant="glass" onClick={() => void agent.reject(message.confirm!.pendingId)}>
-                          Не сейчас
-                        </Button>
-                      </div>
-                    )}
+                    ) : null}
                   </div>
                 ) : null}
                 {message.choices?.length ? (
@@ -287,4 +256,46 @@ interface SpeechRec {
   onend: (() => void) | null;
   onerror: (() => void) | null;
   start: () => void;
+}
+
+type Card = NonNullable<ReturnType<typeof useAgent>["messages"][number]["confirm"]>;
+
+function ConfirmBody({ card, compact = false, busy, stale = false, onConfirm, onReject, onAlt }: { card: Card; compact?: boolean; busy: boolean; stale?: boolean; onConfirm: () => void; onReject: () => void; onAlt: (alt: NonNullable<Card["alt"]>) => void }) {
+  return (
+    <div data-agent-target="confirm-card">
+      <p className={`font-semibold ${compact ? "pr-10" : ""}`}>{card.title}</p>
+      <p className="mt-1 text-xs text-[var(--muted)]">{card.summary}</p>
+      <dl className={compact ? "mt-2 space-y-0.5" : "mt-2 space-y-1"}>
+        {card.fields.map((field) => compact ? (
+          <div key={field.label} className="flex items-baseline justify-between gap-3">
+            <dt className="text-[11px] uppercase text-[var(--muted)]">{field.label}</dt>
+            <dd className="text-right">{field.value}</dd>
+          </div>
+        ) : (
+          <div key={field.label}>
+            <dt className="text-[11px] uppercase text-[var(--muted)]">{field.label}</dt>
+            <dd>{field.value}</dd>
+          </div>
+        ))}
+      </dl>
+      {card.warning ? <p className="mt-2 rounded-xl bg-[var(--risk-mid-bg,rgba(245,158,11,0.15))] px-3 py-2 text-xs font-semibold text-[var(--risk-mid-fg,#b45309)]" role="note">⚠ {card.warning}</p> : null}
+      {card.details?.rows.length ? (
+        <details className="mt-2 rounded-xl bg-black/5 px-3 py-1.5 text-xs dark:bg-white/5">
+          <summary className="min-h-9 cursor-pointer select-none py-1.5 font-semibold">{card.details.title}</summary>
+          <ul className="max-h-48 space-y-0.5 overflow-y-auto pb-1">
+            {card.details.rows.map((row) => (
+              <li key={row.label} className="flex justify-between gap-3"><span>{row.label}</span><span className="tabular-nums text-[var(--muted)]">{row.value}</span></li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {stale ? null : (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button onClick={onConfirm} disabled={busy}>Подтвердить</Button>
+          {card.alt ? <Button variant="glass" onClick={() => onAlt(card.alt!)} disabled={busy}>{card.alt.label}</Button> : null}
+          <Button variant="glass" onClick={onReject}>Не сейчас</Button>
+        </div>
+      )}
+    </div>
+  );
 }

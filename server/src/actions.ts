@@ -23,7 +23,7 @@ import { formFill } from "../../shared/src/form-fill";
 import { analyzeSession, withHypothetical } from "../../shared/src/navigator";
 import { composeBrief, narrateAdvice, narrateOverview, narrateWeekSchedule, weekCardRows } from "../../shared/src/narrate";
 import { samePerson } from "../../shared/src/names";
-import { matchDiscipline, parseIntent } from "../../shared/src/parser";
+import { deadlineDate as scheduleAskDate, matchDiscipline, parseIntent } from "../../shared/src/parser";
 import { registryByName, relaxArgs, schemas, stepLabel } from "../../shared/src/registry";
 import { makeVerifyCode } from "./auth/crypto";
 import { searchRegulations } from "./content/regulations";
@@ -95,6 +95,8 @@ import {
 } from "./homework";
 import { addColumn, applyMark, clearMark, deleteColumn, editColumn, heldLessonsBetween, lessonChip, nearestHeldLessons, planMark, readScheme, saveScheme, setTopic } from "./journal";
 import { triageRequest } from "./triage";
+import { bulkPreview, issuePreview, journalFocusLink, prepareBulk, prepareIssue } from "./bulk";
+import { applyBulkAttendance, applyBulkMark, missingLessonNote } from "./journal";
 import { getConfig } from "./config";
 
 const ProposalSchema = z.object({
@@ -140,7 +142,7 @@ export async function perform(
   user: PublicUser,
   name: string,
   rawArgs: Record<string, unknown> | undefined,
-  ctx: { source: "ui" | "agent"; confirmed: boolean },
+  ctx: { source: "ui" | "agent"; confirmed: boolean; page?: { groupName?: string; discipline?: string } },
 ): Promise<PerformResult> {
   const def = registryByName.get(name as never);
   if (!def) throw badRequest(`Неизвестный инструмент «${name}»`);
@@ -216,12 +218,13 @@ export async function perform(
     if (isFutureDay(String(args.date))) return { ok: true, summary: "Дату из будущего ставить нельзя." };
     const held = await heldLessonsBetween(String(args.groupName), String(args.discipline), String(args.date), String(args.date));
     if (!held.length) {
-      const options = await nearestHeldLessons(String(args.groupName), String(args.discipline), moscowToday(), 3);
+      const why = await missingLessonNote(String(args.groupName), String(args.discipline), String(args.date));
+      const options = withTarget(await nearestHeldLessons(String(args.groupName), String(args.discipline), moscowToday(), 3), why.target);
       const list = options.map((row) => lessonChip(row.date)).join(", ");
       const clarificationId = await saveClarification(user.id, name, args);
       return {
         ok: true,
-        summary: `${lessonChip(String(args.date)).replace(/ \(.*\)$/, "")} пары по «${args.discipline}» не было.${list ? ` Ближайшие пары: ${list}.` : ""}`,
+        summary: `${lessonChip(String(args.date)).replace(/ \(.*\)$/, "")} пары по «${args.discipline}» не было.${why.text}${list ? ` ${why.target ? "Можно поставить" : "Ближайшие пары"}: ${list}.` : ""}`,
         choices: options.map((row) => ({ label: lessonChip(row.date), clarificationId, entityId: row.date })),
       };
     }
@@ -234,20 +237,13 @@ export async function perform(
       args.previousStatus = prior?.status ?? "—";
     }
   }
-  if (name === "teacher_issue_assignment" && !args.discipline) {
-    const load = await loadForTeacher(user.id);
-    const taught = load.filter((row) => row.groupName === String(args.groupName));
-    if (!taught.length) return { ok: true, summary: "У вас нет предмета в этой группе." };
-    if (taught.length > 1) {
-      const clarificationId = await saveClarification(user.id, name, args);
-      return {
-        ok: true,
-        summary: "Несколько предметов в группе. Какой выдать?",
-        choices: taught.map((row) => ({ label: row.discipline, clarificationId, entityId: row.discipline })),
-        card: { title: String(args.groupName), rows: taught.map((row) => ({ label: "Предмет", value: row.discipline })) },
-      };
-    }
-    args.discipline = taught[0].discipline;
+  if (name === "teacher_issue_assignment" && ctx.source === "agent") {
+    const early = await prepareIssue(user, args, (tool, saved) => saveClarification(user.id, tool, saved));
+    if (early) return early;
+  }
+  if ((name === "teacher_bulk_mark" || name === "teacher_bulk_attendance") && ctx.source === "agent") {
+    const early = await prepareBulk(user, name, args, (tool, saved) => saveClarification(user.id, tool, saved));
+    if (early) return early;
   }
   if (name === "teacher_set_mark" && !args.discipline && args.title) {
     const title = String(args.title);
@@ -260,13 +256,19 @@ export async function perform(
     const columns = ranked((await getDb().select().from(journalColumns)).filter((row) => owns(row.groupName, row.discipline)));
     const works = columns.length ? [] : ranked(await getDb().select().from(assignments).where(eq(assignments.teacherId, user.id)));
     const pool = columns.length ? columns : works;
-    const close = pool.filter((item) => pool[0].score - item.score <= 15);
+    let close = pool.filter((item) => pool[0].score - item.score <= 15);
+    const onPage = close.filter((item) => ctx.page?.discipline && item.row.discipline === ctx.page.discipline && (!ctx.page.groupName || item.row.groupName === ctx.page.groupName));
+    if (close.length > 1 && onPage.length === 1) close = onPage;
     if (close.length > 1) {
       const clarificationId = await saveClarification(user.id, name, args);
       return {
         ok: true,
         summary: "Несколько похожих работ. Какую?",
-        choices: close.map((item) => ({ label: item.row.title, clarificationId, entityId: "lessonDate" in item.row ? `col:${item.row.id}` : item.row.title })),
+        choices: close.map((item) => {
+          const twin = close.filter((other) => other.row.title === item.row.title).length > 1;
+          const date = "lessonDate" in item.row ? ` · ${String(item.row.lessonDate).slice(8, 10)}.${String(item.row.lessonDate).slice(5, 7)}` : "";
+          return { label: twin ? `${item.row.title} · ${item.row.discipline}${date}` : item.row.title, clarificationId, entityId: "lessonDate" in item.row ? `col:${item.row.id}` : item.row.title };
+        }),
       };
     }
     const hit = close[0]?.row;
@@ -329,12 +331,14 @@ export async function perform(
     }
     const plan = await planMark(user, args);
     if ("noLesson" in plan && plan.noLesson) {
-      const list = plan.options.map((row) => lessonChip(row.date)).join(", ");
+      const why = await missingLessonNote(String(plan.groupName ?? args.groupName), String(plan.discipline), plan.date);
+      const options = withTarget(plan.options, why.target);
+      const list = options.map((row) => lessonChip(row.date)).join(", ");
       const clarificationId = await saveClarification(user.id, name, args);
       return {
         ok: true,
-        summary: `${lessonChip(plan.date).replace(/ \(.*\)$/, "")} пары по «${plan.discipline}» не было.${list ? ` Ближайшие пары: ${list}.` : ""}`,
-        choices: plan.options.map((row) => ({ label: lessonChip(row.date), clarificationId, entityId: row.date })),
+        summary: `${lessonChip(plan.date).replace(/ \(.*\)$/, "")} пары по «${plan.discipline}» не было.${why.text}${list ? ` ${why.target ? "Можно поставить" : "Ближайшие пары"}: ${list}.` : ""}`,
+        choices: options.map((row) => ({ label: lessonChip(row.date), clarificationId, entityId: row.date })),
       };
     }
     if ("choices" in plan && plan.choices) {
@@ -619,17 +623,11 @@ async function buildPreview(user: PublicUser, name: string, args: Record<string,
       ],
     };
   }
-  if (name === "teacher_issue_assignment") {
-    return {
-      title: "Выдать задание",
-      summary: "Группа получит уведомление.",
-      fields: [
-        { label: "Группа", value: String(args.groupName) },
-        { label: "Предмет", value: String(args.discipline) },
-        { label: "Задание", value: String(args.title) },
-        { label: "Срок", value: String(args.deadline) },
-      ],
-    };
+  if (name === "teacher_issue_assignment") return issuePreview(args);
+  if (name === "teacher_bulk_mark" || name === "teacher_bulk_attendance") {
+    const { columnId, ...card } = await bulkPreview(name, args, (tool, saved) => saveClarification(user.id, tool, saved));
+    void columnId;
+    return card;
   }
   if (name === "teacher_set_mark") {
     const work = WORK_TYPES[String(args.workType ?? "current") as WorkType];
@@ -1219,12 +1217,32 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
       groupName: String(args.groupName),
       discipline: String(args.discipline),
       title: String(args.title),
-      description: String(args.description),
-      kind: String(args.kind) as HomeworkKind,
+      description: String(args.description ?? args.title),
+      kind: String(args.kind ?? "problem_set") as HomeworkKind,
       deadline: String(args.deadline),
       scheduleItemId: args.scheduleItemId ? Number(args.scheduleItemId) : undefined,
     });
-    return { summary: result.summary, ui: [{ type: "navigate", to: `/teach/homework/${result.id}`, highlight: "queue" }, { type: "invalidate", keys: ["homework"] }] };
+    return {
+      summary: `${result.summary} Срок — ${formatRuDate(String(args.deadline))}.`,
+      ui: [{ type: "invalidate", keys: ["homework", "teach-assignments", "teach-queue", "teach"] }, { type: "navigate", to: `/teach/assignments?hl=${result.id}`, highlight: `assignment-${result.id}` }],
+      reversible: { undo: { type: "assignment", assignmentId: result.id, title: String(args.title) } },
+    };
+  },
+  async teacher_bulk_mark(user, args) {
+    const result = await applyBulkMark(user, args);
+    return {
+      summary: result.summary,
+      ui: [{ type: "invalidate", keys: ["journal", "grades", "teach", "brief", "notifications"] }, { type: "navigate", to: journalFocusLink(result.groupName, result.discipline, result.date, result.columnId), highlight: `journal-col-${result.columnId}` }],
+      reversible: { undo: result.undo as UndoPayload },
+    };
+  },
+  async teacher_bulk_attendance(user, args) {
+    const result = await applyBulkAttendance(user, args);
+    return {
+      summary: result.summary,
+      ui: [{ type: "invalidate", keys: ["journal", "grades", "teach"] }, { type: "navigate", to: journalFocusLink(result.groupName, result.discipline, result.date), highlight: "journal" }],
+      reversible: { undo: result.undo as UndoPayload },
+    };
   },
   async teacher_return_homework(user, args) {
     const returned = await returnSubmission(user, Number(args.assignmentId), String(args.studentName), String(args.comment));
@@ -1474,13 +1492,23 @@ async function resolveLesson(user: PublicUser, args: Record<string, unknown>) {
   return { missingDay: focus, options: nearest.slice(0, 3) };
 }
 
-async function undoAudit(user: PublicUser, auditId: number): Promise<Outcome> {
-  const rows = await getDb().select().from(auditLog).where(eq(auditLog.id, auditId)).limit(1);
-  const row = rows[0];
-  if (!row || row.userId !== user.id) throw notFound("Действие не найдено");
-  if (!row.reversible || !row.undo) throw badRequest("Это действие нельзя отменить.");
-  if (row.undoneAt) throw badRequest("Его уже отменяли.");
-  const undo = row.undo;
+
+async function assertAssignmentUndoable(assignmentId: number) {
+  const started = await getDb().select({ id: submissions.id, status: submissions.status }).from(submissions).where(eq(submissions.assignmentId, assignmentId));
+  if (started.some((row) => row.status !== "not_started" && row.status !== "in_progress")) throw badRequest("Студенты уже сдают это задание — отменить выдачу нельзя.");
+}
+
+async function applyUndo(user: PublicUser, undo: UndoPayload): Promise<void> {
+  if (undo.type === "batch") {
+    for (const item of [...undo.items].reverse()) await applyUndo(user, item);
+    return;
+  }
+  if (undo.type === "assignment") {
+    await getDb().delete(notifications).where(eq(notifications.href, `/homework/${undo.assignmentId}`));
+    await getDb().delete(submissions).where(eq(submissions.assignmentId, undo.assignmentId));
+    await getDb().delete(assignments).where(and(eq(assignments.id, undo.assignmentId), eq(assignments.teacherId, user.id)));
+    return;
+  }
   if (undo.type === "settings") {
     await getDb().update(users).set({ theme: undo.theme, showCancelled: undo.showCancelled }).where(eq(users.id, user.id));
   } else if (undo.type === "notifications") {
@@ -1678,6 +1706,19 @@ async function undoAudit(user: PublicUser, auditId: number): Promise<Outcome> {
         });
     }
   }
+}
+
+async function undoAudit(user: PublicUser, auditId: number): Promise<Outcome> {
+  const rows = await getDb().select().from(auditLog).where(eq(auditLog.id, auditId)).limit(1);
+  const row = rows[0];
+  if (!row || row.userId !== user.id) throw notFound("Действие не найдено");
+  if (!row.reversible || !row.undo) throw badRequest("Это действие нельзя отменить.");
+  if (row.undoneAt) throw badRequest("Его уже отменяли.");
+  const undo = row.undo;
+  if (undo.type === "assignment") await assertAssignmentUndoable(undo.assignmentId);
+  if (undo.type === "batch") {
+    for (const item of [...undo.items].reverse()) await applyUndo(user, item);
+  } else await applyUndo(user, undo);
   await getDb().update(auditLog).set({ undoneAt: new Date().toISOString() }).where(eq(auditLog.id, row.id));
   const ui: UiDirective[] = [{ type: "invalidate", keys: ["me", "schedule", "notifications", "brief", "audit", "homework", "teach-assignment", "journal"] }];
   if (undo.type === "settings") ui.push({ type: "theme", value: undo.theme });
@@ -1855,6 +1896,16 @@ export async function runTurn(
       proposal = null;
     }
   }
+  let replacedPending: string | undefined;
+  if (!proposal) {
+    const edit = await editPendingIssue(user, input.message);
+    if (edit && "say" in edit) proposal = { say: String(edit.say), steps: [] };
+    else if (edit && "args" in edit && edit.args) {
+      proposal = { say: "Обновил карточку задания.", steps: [{ tool: "teacher_issue_assignment", args: edit.args }] };
+      replacedPending = edit.replaced;
+    }
+  }
+  void replacedPending;
   if (!proposal) {
     const names = user.role === "student" ? await disciplineNames(user.id) : [];
     proposal = parseIntent(input.message, user.role, names);
@@ -1865,7 +1916,7 @@ export async function runTurn(
   const page = pageContext(input.context);
   if (page.groupName || page.discipline) {
     for (const call of proposal.steps) {
-      if (!["teacher_student_info", "teacher_group_info"].includes(call.tool)) continue;
+      if (!["teacher_student_info", "teacher_group_info", "teacher_bulk_mark", "teacher_bulk_attendance", "teacher_issue_assignment"].includes(call.tool)) continue;
       const args = (call.args ?? {}) as Record<string, unknown>;
       if (!args.groupName && !args.discipline && page.groupName) args.groupName = page.groupName;
       if (!args.discipline && page.discipline && (!args.groupName || args.groupName === page.groupName)) args.discipline = page.discipline;
@@ -1882,6 +1933,7 @@ export async function runTurn(
   let undo: { auditId: number; label: string } | undefined;
   let fill: Record<string, string> | undefined;
   let stopped = false;
+  const notes: string[] = [];
   for (let index = 0; index < proposal.steps.length; index += 1) {
     const call = proposal.steps[index];
     const label = stepLabel(call.tool, call.args);
@@ -1889,8 +1941,13 @@ export async function runTurn(
       steps.push({ label, status: "skipped", detail: "Ждёт подтверждения предыдущего шага.", tool: call.tool });
       continue;
     }
+    const def = registryByName.get(call.tool as never);
+    if (def && !def.roles.includes(user.role)) {
+      steps.push({ label, status: "error", detail: roleHint(user.role, call.tool), tool: call.tool });
+      continue;
+    }
     try {
-      const result = await perform(user, call.tool, call.args, { source: "agent", confirmed: false });
+      const result = await perform(user, call.tool, call.args, { source: "agent", confirmed: false, page });
       steps.push({ label, status: "ok", detail: result.summary || undefined, tool: call.tool });
       ui.push(...(result.ui ?? []));
       if (result.citations?.length) citations = result.citations;
@@ -1909,11 +1966,11 @@ export async function runTurn(
         }
       }
     } catch (error) {
-      const detail = error instanceof HttpError ? error.message : "Не получилось выполнить шаг.";
+      const detail = error instanceof HttpError ? (error.status === 403 ? roleHint(user.role, call.tool) : error.message) : "Не получилось выполнить шаг.";
       steps.push({ label, status: "error", detail, tool: call.tool });
     }
   }
-  const details = steps.map((step) => step.detail).filter((detail): detail is string => Boolean(detail));
+  const details = [...steps.map((step) => step.detail).filter((detail): detail is string => Boolean(detail)), ...new Set(notes)];
   const queued = proposal.steps.length > 1 || /не разобрал/i.test(proposal.say) ? proposal.say : "";
   const say = details.length ? [queued, ...details].filter(Boolean).join("\n\n") : proposal.say || "Уточните, пожалуйста, что сделать.";
   let nextUi = dedupeUi(ui);
@@ -1922,6 +1979,42 @@ export async function runTurn(
   if (nav && nav.type === "navigate") link = { to: nav.to, label: "На странице" };
   const open = nav && nav.type === "navigate" ? nav.to : undefined;
   return { mode, caption, say, steps, ui: nextUi, confirm, citations, download, undo, cards, choices, link, open, fill };
+}
+
+function roleHint(role: string, tool?: string) {
+  if (role !== "teacher" && tool && /^teacher_(set_mark|set_attendance|bulk_|clear_mark)/.test(tool)) {
+    return role === "staff"
+      ? "Оценки и явку ставит преподаватель. Я могу показать журнал группы, успеваемость и должников, разобрать заявки."
+      : "Оценки и явку ставит преподаватель. Могу показать ваши оценки и пропуски.";
+  }
+  if (role !== "teacher" && tool === "teacher_issue_assignment") return "Задания выдаёт преподаватель. Могу показать задания и сроки.";
+  if (role === "teacher") return "Это действие доступно студентам. Я могу поставить баллы студенту или всей группе, отметить явку, выдать задание, показать оценки и пропуски, должников и работы на проверке.";
+  if (role === "staff") return "Это действие недоступно сотруднику деканата. Могу разобрать входящие заявки, сменить статус и подготовить объявление.";
+  return "Это действие доступно преподавателю. Могу показать пары, задания и оценки, заказать справку или сдать работу.";
+}
+
+/** Правка открытой карточки задания ответом: «срок 5 декабря», «название …». */
+async function editPendingIssue(user: PublicUser, message: string) {
+  if (user.role !== "teacher") return null;
+  const t = message.trim();
+  const m = t.match(/^(?:измени\s+|поменяй\s+|исправь\s+)?(срок|дедлайн|до|название|назови|описание|тип|группа|предмет)(?=[\s:—-])\s*[:\-—]?\s*(.+)$/i);
+  if (!m) return null;
+  const row = (await getDb().select().from(pendingActions).where(and(eq(pendingActions.userId, user.id), eq(pendingActions.action, "teacher_issue_assignment"), isNull(pendingActions.consumedAt), gte(pendingActions.expiresAt, new Date().toISOString()))).orderBy(desc(pendingActions.createdAt)).limit(1))[0];
+  if (!row) return null;
+  const args = { ...(row.args as Record<string, unknown>) };
+  const key = m[1].toLowerCase();
+  const value = m[2].trim().replace(/^[«"]|[»"]$/g, "");
+  if (/срок|дедлайн|^до$/.test(key)) {
+    const asked = scheduleAskDate(value);
+    if (!asked) return { say: "Не понял дату. Напишите, например: «срок 5 декабря» или «срок 05.12».", steps: [] as never[] };
+    args.deadline = asked;
+  } else if (/назван|назови/.test(key)) args.title = value.slice(0, 160);
+  else if (/описан/.test(key)) args.description = value.slice(0, 2000);
+  else if (/тип/.test(key)) args.kind = /эссе/i.test(value) ? "essay" : /лаб/i.test(value) ? "lab" : /чтен/i.test(value) ? "reading" : /проект/i.test(value) ? "project" : "problem_set";
+  else if (/групп/.test(key)) args.groupName = value.toUpperCase();
+  else if (/предмет/.test(key)) args.discipline = value;
+  await getDb().update(pendingActions).set({ consumedAt: new Date().toISOString() }).where(eq(pendingActions.id, row.id));
+  return { args, replaced: row.id };
 }
 
 /** Группа и предмет из открытого журнала: «оценки Сорокина» без предмета смотрим там, где стоит преподаватель. */
@@ -1933,6 +2026,11 @@ function pageContext(context?: string) {
   } catch {
     return {};
   }
+}
+
+function withTarget<T extends { date: string }>(rows: T[], target?: string) {
+  if (!target) return rows;
+  return [{ ...(rows[0] ?? {}), date: target } as T, ...rows.filter((row) => row.date !== target)].slice(0, 3);
 }
 
 const ACT_TOOLS = new Set([
@@ -1967,6 +2065,7 @@ function guideFor(name: string, args: Record<string, unknown>) {
   if (name === "submit_homework" && args.assignmentId) return `/homework/${args.assignmentId}`;
   if (name === "create_request") return "/requests/new";
   if (name === "teacher_issue_assignment") return "/teach/assign";
+  if ((name === "teacher_bulk_mark" || name === "teacher_bulk_attendance") && args.groupName && args.discipline && args.date) return journalFocusLink(String(args.groupName), String(args.discipline), String(args.date), args.columnId ? Number(args.columnId) : undefined);
   if (name === "staff_publish_announcement") return "/staff/announcements";
   if (name === "staff_set_status" && args.requestId) return `/staff/requests/${args.requestId}`;
   if ((name === "teacher_grade_homework" || name === "teacher_return_homework") && args.assignmentId) return `/teach/homework/${args.assignmentId}`;
@@ -2026,7 +2125,32 @@ export async function clarifyChoice(user: PublicUser, clarificationId: string, e
   if (row.tool === "mark_schedule_item") {
     args.scheduleItemId = Number(entityId);
   } else if (row.tool === "teacher_issue_assignment") {
-    args.discipline = entityId;
+    if (entityId.startsWith("deadline:")) args.deadline = entityId.slice(9);
+    else if (entityId.startsWith("pair:")) {
+      const [groupName, discipline] = entityId.slice(5).split("||");
+      args.groupName = groupName;
+      args.discipline = discipline;
+    } else args.discipline = entityId;
+  } else if (row.tool === "teacher_bulk_mark" || row.tool === "teacher_bulk_attendance") {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(entityId)) {
+      args.date = entityId;
+      delete args.lesson;
+      delete args.columnId;
+      delete args.newColumn;
+    } else if (entityId === "col:new") args.newColumn = true;
+    else if (entityId.startsWith("col:")) {
+      args.columnId = Number(entityId.slice(4));
+      delete args.lesson;
+      delete args.date;
+    } else if (entityId === "value:max") {
+      args.max = true;
+      delete args.value;
+    } else if (entityId === "only-empty") args.onlyEmpty = true;
+    else if (entityId.startsWith("pair:")) {
+      const [groupName, discipline] = entityId.slice(5).split("||");
+      args.groupName = groupName;
+      args.discipline = discipline;
+    }
   } else if (row.tool === "teacher_update_grading" || row.tool === "teacher_set_mark" || row.tool === "teacher_set_attendance" || row.tool === "teacher_clear_mark") {
     if (/^\d{4}-\d{2}-\d{2}$/.test(entityId)) {
       args.date = entityId;

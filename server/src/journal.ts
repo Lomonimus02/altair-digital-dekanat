@@ -231,6 +231,32 @@ export async function nearestHeldLessons(groupName: string, discipline: string, 
   return held.reverse().slice(0, limit);
 }
 
+/** Почему в этот день нет пары: перенос (куда) или отмена. Перенесённую пару предлагаем первой. */
+export async function missingLessonNote(groupName: string, discipline: string, date: string) {
+  const rows = await getDb().select().from(scheduleItems).where(and(
+    eq(scheduleItems.groupName, groupName),
+    eq(scheduleItems.discipline, discipline),
+    gte(scheduleItems.date, date),
+    lte(scheduleItems.date, addDaysIso(date, 14)),
+  )).orderBy(asc(scheduleItems.date), asc(scheduleItems.startsAt));
+  const own = rows.find((row) => row.date === date);
+  if (!own) return { text: "", target: undefined as string | undefined };
+  const note = (own.changeNote ?? "").toLowerCase();
+  if (own.changeType === "moved" && !note.includes("перенесено с")) {
+    const target = rows.find((row) => row.date > date && row.changeType === "moved" && (row.changeNote ?? "").toLowerCase().includes("перенесено с") && lessonHeld(row) && row.date <= moscowToday());
+    const any = target ?? rows.find((row) => row.date > date && row.changeType === "moved" && (row.changeNote ?? "").toLowerCase().includes("перенесено с"));
+    return { text: any ? ` Пара перенесена на ${lessonChip(any.date)}.` : " Пара перенесена.", target: target?.date };
+  }
+  if (own.changeType === "cancelled") return { text: " Пара отменена.", target: undefined };
+  return { text: "", target: undefined };
+}
+
+function addDaysIso(date: string, days: number) {
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 export async function heldLessonsBetween(groupName: string, discipline: string, from: string, to: string) {
   const rows = await getDb().select().from(scheduleItems).where(and(
     eq(scheduleItems.groupName, groupName),
@@ -757,5 +783,164 @@ export async function studentTable(user: PublicUser, from?: string, to?: string,
     period: { from: bounds.from, to: bounds.to, semester: active, label: periodLabel(bounds.from, bounds.to), final },
     rows,
     dates: [...dates].sort(),
+  };
+}
+
+/* ---------- R41: массовые действия агента ---------- */
+
+export async function assertTeaches(teacherId: number, groupName: string, discipline: string) {
+  return teaches(teacherId, groupName, discipline);
+}
+
+export async function rosterOf(groupName: string) {
+  return studentsOf(groupName);
+}
+
+export async function heldLessonOn(groupName: string, discipline: string, date: string) {
+  return lessonOn(groupName, discipline, date);
+}
+
+/** Ближайшая проведённая или будущая пара начиная с сегодняшнего дня. */
+export async function nextHeldLesson(groupName: string, discipline: string, today: string) {
+  const rows = await getDb().select().from(scheduleItems).where(and(
+    eq(scheduleItems.groupName, groupName),
+    eq(scheduleItems.discipline, discipline),
+    gte(scheduleItems.date, today),
+  )).orderBy(asc(scheduleItems.date), asc(scheduleItems.startsAt));
+  return rows.find((row) => lessonHeld(row)) ?? null;
+}
+
+export function pickExcluded<T extends { fullName: string }>(students: T[], names: string[]) {
+  const missing: string[] = [];
+  const out = new Set<T>();
+  for (const name of names) {
+    const hit = students.filter((row) => samePerson(name, row.fullName));
+    if (hit.length === 1) out.add(hit[0]);
+    else missing.push(name);
+  }
+  return { excluded: out, missing };
+}
+
+export async function columnsOn(groupName: string, discipline: string, date: string) {
+  return getDb().select().from(journalColumns).where(and(eq(journalColumns.groupName, groupName), eq(journalColumns.discipline, discipline), eq(journalColumns.lessonDate, date))).orderBy(asc(journalColumns.position), asc(journalColumns.id));
+}
+
+export async function columnsOf(groupName: string, discipline: string) {
+  return getDb().select().from(journalColumns).where(and(eq(journalColumns.groupName, groupName), eq(journalColumns.discipline, discipline))).orderBy(asc(journalColumns.lessonDate), asc(journalColumns.id));
+}
+
+export async function marksInColumn(columnId: number) {
+  return getDb().select().from(marks).where(eq(marks.columnId, columnId));
+}
+
+export async function attendanceOn(groupName: string, discipline: string, date: string) {
+  return getDb().select().from(attendance).where(and(eq(attendance.groupName, groupName), eq(attendance.discipline, discipline), eq(attendance.lessonDate, date)));
+}
+
+function checkDate(date: string) {
+  const today = moscowToday();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw badRequest("Нужна дата");
+  const term = semesterBounds(today);
+  if (date < term.from || date > term.to) throw badRequest("Дата вне семестра");
+  if (isFutureDay(date, today)) throw badRequest("Дату из будущего ставить нельзя");
+}
+
+/** Баллы всей группе в одну колонку. Одна запись аудита — одна отмена на всех. */
+export async function applyBulkMark(user: PublicUser, args: Record<string, unknown>) {
+  if (user.role !== "teacher") throw forbidden();
+  const db = getDb();
+  let column = args.columnId ? (await db.select().from(journalColumns).where(eq(journalColumns.id, Number(args.columnId))).limit(1))[0] : undefined;
+  if (args.columnId && !column) throw notFound(MISS);
+  const groupName = column?.groupName ?? String(args.groupName ?? "");
+  const discipline = column?.discipline ?? String(args.discipline ?? "");
+  if (!groupName || !discipline) throw badRequest("Нужны группа и предмет");
+  await teaches(user.id, groupName, discipline);
+  const date = column?.lessonDate ?? String(args.date ?? "");
+  checkDate(date);
+  let createdColumn: typeof journalColumns.$inferSelect | null = null;
+  if (!column) {
+    const lesson = await lessonOn(groupName, discipline, date);
+    if (!lesson) throw badRequest("В этот день пары не было");
+    const workType = (args.workType ?? "current") as WorkType;
+    const rule = (await readScheme(groupName, discipline)).defaults[workType] ?? defaultWorkRule(workType);
+    const siblings = (await columnsOn(groupName, discipline, date)).filter((row) => row.workType === workType);
+    const base = WORK_TYPES[workType].label;
+    const taken = new Set(siblings.map((row) => row.title));
+    let title: string = base;
+    for (let n = 2; taken.has(title); n += 1) title = `${base} ${n}`;
+    [createdColumn] = await db.insert(journalColumns).values({
+      groupName, discipline, lessonDate: date, scheduleItemId: lesson.id, workType, title,
+      maxScore: rule.maxPoints, maxPoints: rule.maxPoints, weight: String(rule.weight), createdBy: user.id,
+    }).returning();
+    column = createdColumn;
+  }
+  const max = column.maxPoints ?? column.maxScore ?? 10;
+  const points = args.max ? max : Number(args.value);
+  if (!Number.isFinite(points) || !validPoints(points, max)) throw badRequest(`Баллы от 0 до ${max} с шагом 0,5`);
+  const roster = await studentsOf(groupName);
+  const { excluded } = pickExcluded(roster, (args.except as string[] | undefined) ?? []);
+  const existing = await db.select().from(marks).where(eq(marks.columnId, column.id));
+  const byStudent = new Map(existing.map((row) => [row.studentId, row]));
+  const targets = roster.filter((row) => !excluded.has(row) && !(args.onlyEmpty && byStudent.get(row.id)?.points != null));
+  const kind = column.workType === "credit" ? "credit" : "current";
+  const items: Array<Record<string, unknown>> = [];
+  if (createdColumn) items.push({ type: "journal_column", column: { ...createdColumn, removed: true }, marks: [] });
+  let changed = 0;
+  for (const student of targets) {
+    const had = (await db.select({ id: disciplines.id }).from(disciplines).where(and(eq(disciplines.studentId, student.id), eq(disciplines.name, discipline))).limit(1))[0];
+    const subject = await ensureDiscipline(student.id, discipline, groupName);
+    const prior = byStudent.get(student.id);
+    let markId: number;
+    if (prior) {
+      await db.update(marks).set({ value: null, points: String(points), label: column.title, kind, awardedOn: date, teacherId: user.id, updatedAt: new Date().toISOString() }).where(eq(marks.id, prior.id));
+      markId = prior.id;
+    } else {
+      const [saved] = await db.insert(marks).values({ disciplineId: subject.id, studentId: student.id, columnId: column.id, label: column.title, value: null, points: String(points), kind, awardedOn: date, comment: null, teacherId: user.id }).returning();
+      markId = saved.id;
+    }
+    const before = prior?.points != null ? Number(prior.points) : legacyFromMark(prior?.value ?? null, prior?.kind ?? kind);
+    if (before !== points) changed += 1;
+    const notice = before !== points ? await notifyGrade(student.id, points, max, column.title, date, discipline, markId) : null;
+    items.push({ type: "mark_cell", markId, created: !prior, prev: prior ? snapshotMark(prior) : null, notice, createdDisciplineId: had ? null : subject.id });
+  }
+  return {
+    summary: `${groupName}, ${discipline}, ${date.slice(8, 10)}.${date.slice(5, 7)} «${column.title}»: ${formatScore(points)} из ${max}, студентов: ${targets.length}${changed !== targets.length ? `, изменилось ${changed}` : ""}.`,
+    columnId: column.id,
+    groupName, discipline, date,
+    count: targets.length,
+    undo: { type: "batch" as const, items },
+  };
+}
+
+/** Явка всей группе на одну пару. */
+export async function applyBulkAttendance(user: PublicUser, args: Record<string, unknown>) {
+  if (user.role !== "teacher") throw forbidden();
+  const groupName = String(args.groupName ?? "");
+  const discipline = String(args.discipline ?? "");
+  const date = String(args.date ?? "");
+  await teaches(user.id, groupName, discipline);
+  checkDate(date);
+  if (!(await lessonOn(groupName, discipline, date))) throw badRequest("В этот день пары не было");
+  const status = String(args.status ?? "present") as AttendanceStatus;
+  if (!(status in ATTENDANCE)) throw badRequest("Неизвестный статус явки");
+  const present = STATUS_PRESENT[status] ?? true;
+  const roster = await studentsOf(groupName);
+  const { excluded } = pickExcluded(roster, (args.except as string[] | undefined) ?? []);
+  const rows = await attendanceOn(groupName, discipline, date);
+  const byStudent = new Map(rows.map((row) => [row.studentId, row]));
+  const targets = roster.filter((row) => !excluded.has(row) && !(args.onlyEmpty && byStudent.has(row.id)));
+  const items: Array<Record<string, unknown>> = [];
+  for (const student of targets) {
+    const prior = byStudent.get(student.id);
+    if (prior) await getDb().update(attendance).set({ present, status, teacherId: user.id }).where(eq(attendance.id, prior.id));
+    else await getDb().insert(attendance).values({ teacherId: user.id, studentId: student.id, groupName, discipline, lessonDate: date, present, status });
+    items.push({ type: "attendance", studentId: student.id, groupName, discipline, date, present: prior ? prior.present : null, status: prior?.status ?? null });
+  }
+  const word = status === "present" ? "присутствие" : `«${ATTENDANCE[status]}»`;
+  return {
+    summary: `${groupName}, ${discipline}, ${date.slice(8, 10)}.${date.slice(5, 7)}: ${word}, студентов: ${targets.length}.`,
+    groupName, discipline, date,
+    count: targets.length,
+    undo: { type: "batch" as const, items },
   };
 }

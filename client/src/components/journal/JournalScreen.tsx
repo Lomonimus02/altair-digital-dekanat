@@ -122,7 +122,7 @@ export function JournalScreen({ readOnly = false, endpoint = "/api/teach/journal
         <GradingDialog group={data.groupName} discipline={data.discipline} scheme={data.scheme} endpoint={endpoint} readOnly={readOnly} onDone={() => void journal.refetch()} />
       </div>
       <p className="flex flex-wrap gap-1 text-xs text-[var(--muted)]">{Object.entries(WORK_TYPES).map(([key, item]) => <span key={key} className={`rounded-full px-2 py-1 ${TONES[item.tone]}`}>{item.short}</span>)} <span>Н — нет, Б — болел, О — опоздал, У — уважительная</span></p>
-      {data.students.length === 0 && data.lessons.length === 0 && data.columns.length === 0 ? <EmptyState title="В этом периоде пар нет" text="Покажите семестр целиком." action={<Button onClick={() => { const term = semesterBounds(); set({ from: term.from, to: term.to }); }}>Показать семестр</Button>} /> : mode === "lesson" ? <LessonMode data={data} readOnly={readOnly} onDone={() => void journal.refetch()} /> : <Grid data={data} focus={focus} studentFocus={params.get("student") || ""} marked={params.get("hl") || ""} readOnly={readOnly} onDone={() => void journal.refetch()} />}
+      {data.students.length === 0 && data.lessons.length === 0 && data.columns.length === 0 ? <EmptyState title="В этом периоде пар нет" text="Покажите семестр целиком." action={<Button onClick={() => { const term = semesterBounds(); set({ from: term.from, to: term.to }); }}>Показать семестр</Button>} /> : mode === "lesson" ? <LessonMode data={data} readOnly={readOnly} onDone={() => void journal.refetch()} /> : <Grid data={data} focus={focus} studentFocus={params.get("student") || ""} marked={params.get("hl") || ""} colMark={params.get("hlcol") || ""} readOnly={readOnly} onDone={() => void journal.refetch()} />}
     </div>
   );
 }
@@ -314,8 +314,9 @@ function viewColumns(data: Payload, focus: string): Column[] {
   return list.sort((a, b) => a.date.localeCompare(b.date) || (a.position ?? 0) - (b.position ?? 0) || a.id - b.id);
 }
 
-function Grid({ data, focus, studentFocus, marked = "", readOnly, onDone }: { data: Payload; focus: string; studentFocus: string; marked?: string; readOnly: boolean; onDone: () => void }) {
+function Grid({ data, focus, studentFocus, marked = "", colMark = "", readOnly, onDone }: { data: Payload; focus: string; studentFocus: string; marked?: string; colMark?: string; readOnly: boolean; onDone: () => void }) {
   const picked = new Set(marked.split(",").filter(Boolean).map(Number));
+  const colHit = (column: { id?: number | null; date: string }) => Boolean(colMark) && (colMark.startsWith("d:") ? column.date === colMark.slice(2) : String(column.id ?? "") === colMark);
   const [cell, setCell] = useState<string | null>(null);
   const columns = viewColumns(data, focus);
   const today = moscowToday();
@@ -326,6 +327,19 @@ function Grid({ data, focus, studentFocus, marked = "", readOnly, onDone }: { da
     const grid = node?.closest("[data-scroll-x]");
     if (node instanceof HTMLElement && grid instanceof HTMLElement) scrollCellIntoView(node, grid);
   }, [focus, studentFocus, columns.length]);
+  useEffect(() => {
+    if (!colMark) return;
+    const timer = window.setTimeout(() => {
+      const head = document.querySelector("th.agent-col-hl");
+      const grid = head?.closest("[data-scroll-x]");
+      if (head instanceof HTMLElement && grid instanceof HTMLElement) {
+        scrollCellIntoView(head, grid);
+        const box = grid.getBoundingClientRect();
+        if (box.top < 0 || box.top > window.innerHeight * 0.6) window.scrollTo({ top: window.scrollY + box.top - 96, behavior: "smooth" });
+      }
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [colMark, columns.length]);
   useEffect(() => {
     const first = marked.split(",").filter(Boolean)[0];
     if (!first) return;
@@ -351,12 +365,12 @@ function Grid({ data, focus, studentFocus, marked = "", readOnly, onDone }: { da
         <thead className="sticky top-0 z-20">
           <tr>
             <th className="sticky left-0 z-30 w-[7.5rem] bg-[var(--surface-solid)] px-2 py-2 text-left md:w-48">Студент</th>
-            {columns.map((column) => <ColumnHead key={`${column.date}-${column.id}-${column.workType}-${column.virtual ? "v" : "c"}`} column={column} lesson={data.lessons.find((row) => row.date === column.date)} today={column.date === today} readOnly={readOnly} group={data.groupName} discipline={data.discipline} cells={data.cells} onDone={onDone} onActivate={() => setCell(null)} />)}
+            {columns.map((column) => <ColumnHead key={`${column.date}-${column.id}-${column.workType}-${column.virtual ? "v" : "c"}`} marked={colHit(column)} column={column} lesson={data.lessons.find((row) => row.date === column.date)} today={column.date === today} readOnly={readOnly} group={data.groupName} discipline={data.discipline} cells={data.cells} onDone={onDone} onActivate={() => setCell(null)} />)}
             <th className="sticky right-0 z-30 bg-[var(--surface-solid)] px-2 py-2" title="Итог за семестр">%</th>
           </tr>
         </thead>
         <tbody>
-          {data.students.map((student) => (
+          {data.students.map((student, rowIndex) => (
             <tr key={student.id} data-agent-target={`journal-row-${student.id}`} className={picked.has(student.id) ? "agent-row-hl" : undefined} aria-current={picked.has(student.id) ? "true" : undefined}>
               <th className="sticky left-0 z-10 whitespace-nowrap bg-[var(--surface-solid)] px-2 py-1 text-left font-semibold" scope="row" title={student.name}>{student.short}</th>
               {columns.map((column) => {
@@ -365,7 +379,8 @@ function Grid({ data, focus, studentFocus, marked = "", readOnly, onDone }: { da
                 const key = column.ghostKey ? focus : column.virtual ? `lesson|${column.date}|${column.workType}` : String(column.id);
                 const id = `${student.id}:${key}`;
                 const max = column.maxPoints ?? column.maxScore ?? 10;
-                return <td key={id} className="px-1 py-1"><button type="button" data-agent-action="journal-cell" data-agent-cell={id} className={`grid h-11 min-w-11 place-items-center rounded-xl text-sm font-semibold ${gradeTone(found?.value ?? null, max)} ${column.virtual ? "border border-dashed" : ""}`} aria-label={`${student.short}, ${column.date.slice(8, 10)}.${column.date.slice(5, 7)} ${column.title}: ${found?.value ?? "пусто"}`} onClick={() => setCell(id)}>{found?.value ?? ""}{visit && visit.status !== "present" ? <sup className="text-[10px]">{visit.status === "absent" ? "Н" : visit.status === "sick" ? "Б" : visit.status === "late" ? "О" : "У"}</sup> : null}</button></td>;
+                const hl = colHit(column);
+                return <td key={id} className={`px-1 py-1 ${hl ? "agent-col-hl" : ""}`}><button type="button" data-agent-action="journal-cell" data-agent-cell={id} className={`grid h-11 min-w-11 place-items-center rounded-xl text-sm font-semibold ${gradeTone(found?.value ?? null, max)} ${column.virtual ? "border border-dashed" : ""}`} aria-label={`${student.short}, ${column.date.slice(8, 10)}.${column.date.slice(5, 7)} ${column.title}: ${found?.value ?? "пусто"}`} onClick={() => setCell(id)}><span key={String(found?.value ?? "")} className={hl ? "cell-pop" : undefined} style={hl ? { animationDelay: `${Math.min(rowIndex, 20) * 45}ms` } : undefined}>{found?.value ?? ""}</span>{visit && visit.status !== "present" ? <sup className="text-[10px]">{visit.status === "absent" ? "Н" : visit.status === "sick" ? "Б" : visit.status === "late" ? "О" : "У"}</sup> : null}</button></td>;
               })}
               <td className="sticky right-0 bg-[var(--surface-solid)] px-2 text-center" data-ui="grade" title="Итог за семестр"><span data-ui-part="value" className="t-value inline-grid h-11 min-w-11 place-items-center rounded-2xl px-1" style={{ background: "var(--g-4)", color: "var(--g-4-fg)" }}>{data.averages[student.id]?.percent == null ? "—" : formatPercent(data.averages[student.id]?.percent ?? null)}</span></td>
             </tr>
@@ -378,12 +393,12 @@ function Grid({ data, focus, studentFocus, marked = "", readOnly, onDone }: { da
   );
 }
 
-function ColumnHead({ column, lesson, today, readOnly, group, discipline, cells, onDone, onActivate }: { column: Column; lesson?: Lesson; today: boolean; readOnly: boolean; group: string; discipline: string; cells: Cell[]; onDone: () => void; onActivate?: () => void }) {
+function ColumnHead({ column, marked = false, lesson, today, readOnly, group, discipline, cells, onDone, onActivate }: { column: Column; marked?: boolean; lesson?: Lesson; today: boolean; readOnly: boolean; group: string; discipline: string; cells: Cell[]; onDone: () => void; onActivate?: () => void }) {
   const [open, setOpen] = useState(false);
   const tone = TONES[WORK_TYPES[column.workType as WorkType]?.tone ?? "slate"];
   const caption = [column.title, lesson?.topic].filter(Boolean).join(" · ");
   return (
-    <th className={`px-1 py-1 ${today ? "outline outline-2 outline-[var(--primary)]" : ""} ${lesson?.cancelled ? "opacity-50" : ""}`}>
+    <th className={`px-1 py-1 ${today ? "outline outline-2 outline-[var(--primary)]" : ""} ${lesson?.cancelled ? "opacity-50" : ""} ${marked ? "agent-col-hl" : ""}`} data-agent-target={column.id ? `journal-col-${column.id}` : undefined}>
       <button type="button" className="block min-h-11 text-left" data-agent-action="journal-column" onClick={() => { onActivate?.(); setOpen(true); }}>
         <span className="block text-[11px]">{column.date.slice(8, 10)}.{column.date.slice(5, 7)}</span>
         <span className={`mt-1 inline-flex gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] ${tone}`}><span>{column.short}</span><span>{column.maxPoints ?? column.maxScore}</span><span>вес {Number(column.weight).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}</span></span>

@@ -326,10 +326,10 @@ function AssignTabs({ active }: { active: "issued" | "new" }) {
   );
 }
 
-function IssuedRow({ row }: { row: Issued }) {
+function IssuedRow({ row, marked = false }: { row: Issued; marked?: boolean }) {
   const { counts } = row;
   return (
-    <Link to={`/teach/homework/${row.id}?from=list`} className="block min-h-11" data-agent-target={`issued-${row.id}`}>
+    <Link to={`/teach/homework/${row.id}?from=list`} className={`block min-h-11 rounded-2xl transition-colors ${marked ? "issued-hl" : ""}`} data-agent-target={`assignment-${row.id}`} aria-current={marked ? "true" : undefined}>
       <div className="item-row" data-ui="work">
         <div className="grid h-11 w-11 place-items-center rounded-2xl" style={{ background: "color-mix(in srgb, var(--tone-work) 16%, transparent)", color: "var(--tone-work)" }}>
           <ClipboardList className="h-5 w-5" aria-hidden />
@@ -361,6 +361,12 @@ const ISSUED_FILTERS = [["all", "Все"], ["active", "Активные"], ["pas
 export function TeachAssignments() {
   const list = useQuery({ queryKey: ["teach-assignments"], queryFn: () => api<{ assignments: Issued[] }>("/api/teach/assignments") });
   const [params, setParams] = useSearchParams();
+  const fresh = params.get("hl") || "";
+  useEffect(() => {
+    if (!fresh) return;
+    const timer = window.setTimeout(() => document.querySelector(`[data-agent-target="assignment-${fresh}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" }), 350);
+    return () => window.clearTimeout(timer);
+  }, [fresh, list.data]);
   const status = (params.get("status") ?? "all") as (typeof ISSUED_FILTERS)[number][0];
   const group = params.get("group") ?? "";
   const subject = params.get("subject") ?? "";
@@ -432,13 +438,13 @@ export function TeachAssignments() {
           {active.length ? (
             <section className="space-y-2">
               <SectionHeader title="Активные" count={active.length} />
-              <Glass><div className="work-stack">{active.map((row) => <IssuedRow key={row.id} row={row} />)}</div></Glass>
+              <Glass><div className="work-stack">{active.map((row) => <IssuedRow key={row.id} row={row} marked={String(row.id) === fresh} />)}</div></Glass>
             </section>
           ) : null}
           {past.length ? (
             <section className="space-y-2">
               <SectionHeader title="Срок прошёл" count={past.length} />
-              <Glass><div className="work-stack">{past.map((row) => <IssuedRow key={row.id} row={row} />)}</div></Glass>
+              <Glass><div className="work-stack">{past.map((row) => <IssuedRow key={row.id} row={row} marked={String(row.id) === fresh} />)}</div></Glass>
             </section>
           ) : null}
         </>

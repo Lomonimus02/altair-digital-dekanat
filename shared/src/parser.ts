@@ -57,7 +57,7 @@ export function matchDiscipline(query: string | undefined, names: string[]): str
 export function parseIntent(message: string, role: Role, disciplines: string[] = []): Proposal {
   const t = norm(message);
   if (!t) return say("Напишите, что сделать.");
-  if (/^\s*system\b/i.test(message) || /ignore previous|игнорируй предыдущ|you are now/i.test(message)) {
+  if (/^\s*system\b/i.test(message) || /ignore previous|игнорируй (предыдущ|правил|инструкц|ограничен)|you are now/i.test(message)) {
     return say("Это не просьба к деканату. Напишите своими словами, что сделать.");
   }
 
@@ -65,11 +65,16 @@ export function parseIntent(message: string, role: Role, disciplines: string[] =
     const staff = parseStaff(t, message);
     if (staff) return staff;
   }
+  if (role !== "teacher" && /^(?:поставь|выставь)\s+\S+\s+(?:\d|максим)|^(?:поставь|выставь|отметь)\s.*(?:оценк|балл|явк|присутств)/.test(t)) {
+    return say(role === "staff"
+      ? "Оценки и явку ставит преподаватель. Я могу показать журнал группы, успеваемость и должников, разобрать заявки."
+      : "Оценки и явку ставит преподаватель. Могу показать ваши оценки и пропуски.");
+  }
   if (impossibleDate(message)) return say("Такой даты нет.");
   if (role === "teacher") {
     const taught = parseTeacher(t, message);
     if (taught) return taught;
-    if (/поставь|оцен|балл|явк|отметь/.test(t)) return say("Не разобрал просьбу. Назовите студента, балл или букву явки, дату и предмет.");
+    if (/поставь|оцен|балл|явк|отметь/.test(t)) return say(missingSlotHint(message, t) ?? "Что поставить и кому? Например: «поставь Громову 8 за 18.11», «поставь всем максимум за последнюю пару» или «всем присутствие».");
   }
   const withdraw = extractRequestId(t);
   if (withdraw && /отзов/.test(t)) return step("Нужно подтвердить отзыв заявки.", "cancel_request", { requestId: withdraw });
@@ -318,6 +323,10 @@ function teacherQuestion(raw: string, t: string): Proposal | null {
 function parseTeacher(t: string, raw: string): Proposal | null {
   const question = teacherQuestion(raw, t);
   if (question) return question;
+  const issued = issueCommand(raw, t);
+  if (issued) return issued;
+  const bulk = bulkCommand(raw, t);
+  if (bulk) return bulk;
   const together = splitTeacherConjunction(raw);
   if (together) return together;
   if (/убери\s+оценк|сними\s+оценк|удали\s+оценк/.test(t)) {
@@ -690,4 +699,121 @@ function step(say: string, tool: string, args: Record<string, unknown>): Proposa
 
 function say(text: string): Proposal {
   return { say: text, steps: [] };
+}
+
+const DEADLINE_DAYS: [RegExp, number][] = [[/понедельник/, 1], [/вторник/, 2], [/сред/, 3], [/четверг/, 4], [/пятниц/, 5], [/суббот/, 6], [/воскресен/, 0]];
+
+/** Срок сдачи из текста: «5 декабря», «05.12», «до пятницы», «через неделю», «завтра». */
+export function deadlineDate(text: string, today = moscowToday()): string | undefined {
+  const t = norm(text);
+  if (/через\s+(одну\s+)?недел/.test(t)) return addDays(today, 7);
+  if (/через\s+(две|2)\s+недел/.test(t)) return addDays(today, 14);
+  if (/послезавтра/.test(t)) return addDays(today, 2);
+  if (/завтра/.test(t)) return addDays(today, 1);
+  const day = DEADLINE_DAYS.find(([pattern]) => pattern.test(t));
+  if (day && !/\d/.test(t)) {
+    const delta = (day[1] - weekdayIndex(today) + 7) % 7 || 7;
+    return addDays(today, delta + (/следующ/.test(t) && delta < 7 ? 7 : 0));
+  }
+  const asked = scheduleAsk(t, [], today, "upcoming");
+  if (asked?.date) return asked.date;
+  return undefined;
+}
+
+/* ---------- R41: вся группа ---------- */
+const BULK_WHO = /(^|[\s,])(всем|всей\s+групп\S*|каждому|всех|все\s+(?:были|присутств\S*|пришли)|тем,?\s+у\s+кого\s+нет\S*|только\s+пуст\S*|пустым)(?=[\s,.!]|$)/;
+const BULK_VERB = /(поставь|поставьте|выставь|выставьте|ставь|отметь|отметьте|дай|дайте|начисли|проставь|проставьте)/;
+const MAX_WORD = /максимум|(^|\s)макс(\s|$)|полн\S*\s+балл|высш\S*\s+балл|наивысш/;
+
+function bulkCommand(raw: string, t: string): Proposal | null {
+  if (!BULK_WHO.test(t)) return null;
+  const attendanceWords = /присутств|(^|\s)были(\s|$)|пришли|явк|отсутств|не\s+было|прогул|болел|(^|\s)[нб](\s|$)/;
+  const verb = BULK_VERB.test(t) || /все\s+(были|присутств|пришли)/.test(t) || MAX_WORD.test(t);
+  if (!verb) return null;
+  if (/убери|сними|удали/.test(t)) return say("Снять оценки всей группе сразу нельзя. Снимите их в журнале по одной.");
+  const groupName = t.match(/[а-яё]{1,3}-\d-\d{2}-\d{2}/i)?.[0]?.toUpperCase();
+  const discipline = disciplineHint(t.replace(/только\s+пуст\S*|пустым/g, " "));
+  const except = (t.match(/кроме\s+(.+?)(?=\s+(?:за|на|по|в|во|сегодня|вчера|к)\s|[.!]|$)/)?.[1] ?? "")
+    .split(/\s*(?:,|\sи\s)\s*/)
+    .map((word) => word.trim().split(/\s+/)[0])
+    .filter((word) => word && word.length >= 3 && !/^(тех|того|тем|кого)$/.test(word));
+  const onlyEmpty = /у\s+кого\s+нет|без\s+оцен|только\s+пуст|пустым|кому\s+не\s+(?:поставил|ставил)/.test(t);
+  let rest = t.replace(/кроме\s+.+?(?=\s+(?:за|на|по|в|во|сегодня|вчера|к)\s|[.!]|$)/, " ");
+  const quoted = raw.match(/«([^»]+)»/)?.[1];
+  const named = quoted ?? rest.match(/(?:за|в|по)\s+((?:лаб\S*|лабораторн\S*|контрольн\S*|кр|семинар\S*|проект\S*|тест\S*|коллоквиум\S*|эссе|домашн\S*|дз|задачник\S*)(?:\s*[:\-]?\s*(?!(?:на|за|по|в|кроме)(?:\s|$))[а-яёa-z0-9]+)?)/)?.[1];
+  if (named) rest = rest.replace(named, " ");
+  let lesson: "today" | "next" | "last" | undefined;
+  if (/предстоящ|следующ|ближайш|будущ/.test(rest)) lesson = "next";
+  else if (/сегодня|сегодняшн/.test(rest)) lesson = "today";
+  else if (/(последн|прошл|предыдущ)\S*\s+(пар|урок|заняти)/.test(rest)) lesson = "last";
+  const date = lesson ? undefined : journalDate(rest);
+  const stripped = rest
+    .replace(/\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?/g, " ")
+    .replace(/\d{1,2}\s+(?:январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр)\S*/g, " ")
+    .replace(/[а-яё]{1,3}-\d-\d{2}-\d{2}/gi, " ");
+  const number = stripped.match(/(?:^|\s)(?:по\s+)?(-?\d+(?:[.,]\d)?)(?=\s|$)(?:\s*балл\S*)?/)?.[1];
+  const wordPoints = POINT_WORDS.find(([pattern]) => pattern.test(` ${stripped} `))?.[1];
+  const max = MAX_WORD.test(t);
+  const isAttendance = !max && number == null && attendanceWords.test(t);
+  const where = { ...(groupName ? { groupName } : {}), ...(discipline ? { discipline } : {}), ...(lesson ? { lesson } : {}), ...(date ? { date } : {}), ...(except.length ? { except } : {}), ...(onlyEmpty ? { onlyEmpty: true } : {}) };
+  if (isAttendance) {
+    const status = /болел|(^|\s)б(\s|$)/.test(t) ? "sick" : /отсутств|не\s+было|(^|\s)н(\s|$)|прогул/.test(t) ? "absent" : "present";
+    return step("Готовлю явку всей группе.", "teacher_bulk_attendance", { ...where, status });
+  }
+  if (number != null && Number(number.replace(",", ".")) < 0) return say("Отрицательные баллы поставить нельзя.");
+  const value = number != null ? Number(number.replace(",", ".")) : wordPoints;
+  return step("Готовлю баллы всей группе.", "teacher_bulk_mark", {
+    ...where,
+    ...(named ? { columnTitle: named.trim() } : {}),
+    ...(max ? { max: true } : value != null ? { value } : {}),
+  });
+}
+
+function issueCommand(raw: string, t: string): Proposal | null {
+  if (/выданн|выдал|какие|сколько|покажи|список/.test(t)) return null;
+  const hit = raw.match(/(?:^|\s)(?:добав\S*|созда\S*|сдела\S*|выда\S*|дай|задай|задать|новое)\s+(?:(?:нов\S*|домашн\S*|ещё|еще|одно)\s+)*(?:задани\S*|дз|домашк\S*)(?=\s|:|$)/i);
+  if (!hit || hit.index == null) return null;
+  let tail = raw.slice(hit.index + hit[0].length).trim();
+  const groupName = tail.match(/[А-ЯЁа-яё]{1,3}-\d-\d{2}-\d{2}/)?.[0]?.toUpperCase() ?? t.match(/[а-яё]{1,3}-\d-\d{2}-\d{2}/i)?.[0]?.toUpperCase();
+  const discipline = disciplineHint(norm(tail));
+  const due = tail.match(/(?:^|\s|,)(?:со\s+)?(?:сроком|срок|до|к|на)\s+((?:\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)|(?:\d{1,2}\s+[а-яё]+)|(?:следующ\S*\s+)?(?:понедельник\S*|вторник\S*|сред\S*|четверг\S*|пятниц\S*|суббот\S*)|завтра|послезавтра)(?=[\s,.]|$)/i) ?? tail.match(/(?:^|\s|,)(через\s+(?:одну\s+|две\s+|2\s+)?недел\S*)/i);
+  const deadline = due ? deadlineDate(due[1]) : undefined;
+  if (due) tail = tail.replace(due[0], " ");
+  tail = tail
+    .replace(/(?:^|\s)(?:для\s+)?(?:групп[аеуы]\s+)?[А-ЯЁа-яё]{1,3}-\d-\d{2}-\d{2}/g, " ")
+    .replace(/(?:^|\s)по\s+(?:бд|базам\s+данных|базы\s+данных|программированию|проге|информационн\S*\s+технологи\S*(?:\s+в\s+юридическ\S*\s+деятельност\S*)?)(?=[\s,.:]|$)/gi, " ")
+    .replace(/(?:^|\s)(?:группе|группам)(?=\s|$)/gi, " ");
+  let description = "";
+  const colon = tail.indexOf(":");
+  if (colon >= 0) {
+    description = tail.slice(colon + 1).trim();
+    tail = tail.slice(0, colon);
+  }
+  let title = tail.replace(/[«»"]/g, "").replace(/^\s*(?:под\s+названием|с\s+названием|название|называется)\s+/i, "").replace(/\s+/g, " ").replace(/^[\s,.\-—]+|[\s,.\-—]+$/g, "").trim();
+  if (!title && description) {
+    title = description.slice(0, 80);
+  }
+  if (title) title = title.charAt(0).toUpperCase() + title.slice(1);
+  const kind = /эссе/i.test(raw) ? "essay" : /лаборатор|(^|\s)лаб/i.test(raw) ? "lab" : /чтени/i.test(raw) ? "reading" : /проект/i.test(raw) ? "project" : "problem_set";
+  if (!title) return say("Как назвать задание? Например: «выдай задание Первый миллион до 30.11».");
+  return step("Готовлю задание.", "teacher_issue_assignment", {
+    title: title.slice(0, 160),
+    ...(description.length >= 2 ? { description: description.slice(0, 2000) } : {}),
+    kind,
+    ...(groupName ? { groupName } : {}),
+    ...(discipline ? { discipline } : {}),
+    ...(deadline ? { deadline } : {}),
+  });
+}
+
+/** Когда разобрал часть просьбы — спрашиваю недостающее, а не «Не разобрал». */
+export function missingSlotHint(raw: string, t: string): string | null {
+  const points = /(^|\s)\d+(?:[.,]\d)?(\s|$)/.test(t.replace(/\d{1,2}[./]\d{1,2}/g, " ")) || MAX_WORD.test(t);
+  const name = personName(raw);
+  if (/поставь|выставь|оцен|балл/.test(t)) {
+    if (points && !name) return "Кому поставить? Назовите студента («поставь Громову 8 за 18.11») или скажите «всем».";
+    if (name && !points) return `Сколько баллов поставить${name ? ` ${name}` : ""}? Например: «поставь ${name} 8 за 18.11».`;
+  }
+  if (/отметь|явк/.test(t)) return "Кого отметить? Например: «Громов отсутствует» или «все были на последней паре».";
+  return null;
 }

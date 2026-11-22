@@ -213,6 +213,12 @@ export interface ConfirmCard {
   title: string;
   summary: string;
   fields: { label: string; value: string }[];
+  /** Предупреждение, например «перезапишет 3 оценки». */
+  warning?: string;
+  /** Раскрывающийся список: кому и что было. */
+  details?: { title: string; rows: { label: string; value: string }[] };
+  /** Другой вариант того же действия, например «Только пустым». */
+  alt?: { label: string; clarificationId: string; entityId: string };
 }
 
 export interface AnswerCard {
@@ -227,6 +233,8 @@ export interface ChoiceChip {
 }
 
 export type UndoPayload =
+  | { type: "batch"; items: UndoPayload[] }
+  | { type: "assignment"; assignmentId: number; title: string }
   | { type: "settings"; theme: Theme; showCancelled: boolean }
   | { type: "notifications"; items: { id: number; readAt: string | null }[] }
   | { type: "reminder"; id: number }
