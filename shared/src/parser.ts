@@ -1,7 +1,7 @@
 import type { Proposal, RequestKind, Role } from "./domain";
 import { addDays, moscowToday, weekdayIndex } from "./dates";
 import { journalDate, parseWorkType, WORK_TYPES } from "./journal";
-import { scheduleAsk } from "./schedule-ask";
+import { impossibleDate, scheduleAsk } from "./schedule-ask";
 
 const ALIASES: [string, string][] = [
   ["матан", "математический анализ"],
@@ -57,15 +57,22 @@ export function matchDiscipline(query: string | undefined, names: string[]): str
 export function parseIntent(message: string, role: Role, disciplines: string[] = []): Proposal {
   const t = norm(message);
   if (!t) return say("Напишите, что сделать.");
+  if (/^\s*system\b/i.test(message) || /ignore previous|игнорируй предыдущ|you are now/i.test(message)) {
+    return say("Это не просьба к деканату. Напишите своими словами, что сделать.");
+  }
 
   if (role === "staff") {
     const staff = parseStaff(t, message);
     if (staff) return staff;
   }
+  if (impossibleDate(message)) return say("Такой даты нет.");
   if (role === "teacher") {
     const taught = parseTeacher(t, message);
     if (taught) return taught;
+    if (/поставь|оцен|балл|явк|отметь/.test(t)) return say("Не разобрал просьбу. Назовите студента, балл или букву явки, дату и предмет.");
   }
+  const withdraw = extractRequestId(t);
+  if (withdraw && /отзов/.test(t)) return step("Нужно подтвердить отзыв заявки.", "cancel_request", { requestId: withdraw });
 
   if (/задан|домашн|сдать|дедлайн|просроч/.test(t) && /справк|военкомат|закаж/.test(t)) {
     const kind = detectKind(t) ?? "military_certificate";
@@ -203,7 +210,94 @@ export function parseIntent(message: string, role: Role, disciplines: string[] =
   return say("Могу открыть расписание, прикинуть сессию, заказать справку или найти заявку. Например: «что завтра» или «справка для военкомата».");
 }
 
+function queueSay(steps: { tool: string }[]) {
+  const label = (tool: string) => tool === "teacher_set_mark" ? "поставлю оценку" : tool === "teacher_set_attendance" ? "отмечу явку" : tool === "teacher_grade_homework" ? "оценю работу" : "выполню шаг";
+  return `Выполню по очереди: ${steps.map((item, index) => `${index + 1}) ${label(item.tool)}`).join("; ")}.`;
+}
+
+function rewriteInherited(head: string, step: { args: Record<string, unknown> }, name: string, value: string) {
+  const student = String(step.args.studentName ?? "");
+  let next = student ? head.replace(student, name) : head.replace(/поставь\s+[а-яё-]+/i, `поставь ${name}`);
+  if (step.args.status) next = next.replace(/(^|\s)[нбНБоОуУ](?=\s|$)/, `$1${value}`);
+  else if (step.args.points != null || step.args.value != null) {
+    const points = String(step.args.points ?? step.args.value).replace(".", "\\.");
+    next = next.replace(new RegExp(`(?<![\\d.])${points}(?![\\d.])`), value);
+  }
+  return next;
+}
+
+const SHARED_TAIL = /(\s+за\s+(?:\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?|\d{1,2}\s+(?:январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр)[а-яё]*|сегодня|вчера|завтра|послезавтра)(?:\s+по\s+(?:бд|базам(?:\s+данных)?|прог[а-яё]*|информац[а-яё]*|матан[а-яё]*|[а-яё]{2,}))?)\s*$/i;
+
+function sharedTail(raw: string) {
+  const match = raw.match(SHARED_TAIL);
+  if (!match || match.index == null) return { core: raw, tail: "" };
+  const core = raw.slice(0, match.index).trim();
+  if (!/\s+и\s+/i.test(core)) return { core: raw, tail: "" };
+  return { core, tail: match[1].trim() };
+}
+
+function attachTail(phrase: string, tail: string) {
+  if (!tail || /\sза\s+(?:\d{1,2}[./]\d{1,2}|сегодня|вчера|завтра|послезавтра)/i.test(phrase)) return phrase;
+  return `${phrase} ${tail}`;
+}
+
+const NOT_AN_ACTION = new Set(["get_schedule", "open_page", "list_homework", "get_brief", "get_grades", "get_profile", "search_regulations", "teacher_home", "teacher_list_submissions", "teacher_subject_summary"]);
+
+function partOk(phrase: string, proposal: Proposal | null) {
+  const tool = proposal?.steps[0]?.tool ?? "";
+  if (!tool || !proposal?.steps.length) return false;
+  if (/^(поставь|отметь)/i.test(phrase.trim()) && NOT_AN_ACTION.has(tool)) return false;
+  return true;
+}
+
+function combineParts(phrases: string[]): Proposal | null {
+  const parsed = phrases.map((phrase) => ({ phrase, proposal: parseTeacher(norm(phrase), phrase) }));
+  const missed = parsed.filter((item) => !partOk(item.phrase, item.proposal)).map((item) => item.phrase);
+  const steps = parsed.filter((item) => partOk(item.phrase, item.proposal)).flatMap((item) => item.proposal?.steps ?? []);
+  if (!steps.length && !missed.length) return null;
+  if (missed.length) {
+    const note = `Не разобрал: ${missed.join("; ")}.`;
+    return { say: steps.length > 1 ? `${queueSay(steps)} ${note}` : note, steps };
+  }
+  if (steps.length >= 2) return { say: queueSay(steps), steps };
+  return null;
+}
+
+function splitTeacherConjunction(raw: string): Proposal | null {
+  if (!/\s+и\s+/i.test(raw)) return null;
+  const { core, tail } = sharedTail(raw);
+  if (/\s+и\s+(?=поставь|отметь|верни)/i.test(core)) {
+    const phrases = core.split(/\s+и\s+(?=поставь|отметь|верни)/i).map((part) => attachTail(part.trim(), tail));
+    return combineParts(phrases);
+  }
+  const mid = core.match(/^(.*\S)\s+и\s+(?!поставьте\b|поставь\b|отметьте\b|отметь\b|верните\b|верни\b)([А-ЯЁа-яё]{3,})\s+(\d+(?:[.,]\d+)?|[нНбБоОуУ])\s*$/i);
+  if (!mid) return null;
+  const head = mid[1];
+  const firstPhrase = attachTail(head, tail);
+  const verb = head.match(/^(поставьте|поставь|отметьте|отметь|верните|верни)/i)?.[1] ?? "поставь";
+  const probe = !tail ? parseTeacher(norm(firstPhrase), firstPhrase) : null;
+  const secondBase = probe && partOk(firstPhrase, probe) ? rewriteInherited(head, probe.steps[0], mid[2], mid[3]) : `${verb} ${mid[2]} ${mid[3]}`;
+  return combineParts([firstPhrase, attachTail(secondBase, tail)]);
+}
+
 function parseTeacher(t: string, raw: string): Proposal | null {
+  const together = splitTeacherConjunction(raw);
+  if (together) return together;
+  if (/убери\s+оценк|сними\s+оценк|удали\s+оценк/.test(t)) {
+    const name = personName(raw);
+    const date = journalDate(t);
+    const work = parseWorkType(t);
+    const discipline = disciplineHint(t);
+    if (!name) return say("Чью оценку снять? Назовите студента.");
+    return step("Готовлю снятие оценки.", "teacher_clear_mark", {
+      studentName: name,
+      ...(date ? { date } : {}),
+      ...(work ? { workType: work.type } : {}),
+      ...(discipline ? { discipline } : {}),
+    });
+  }
+  if (/открой явку|явку группы|открой журнал явки/.test(t)) return step("Открываю явку.", "teacher_open_roll", {});
+  if (/пят[её]рк|отличн|(^|[^а-я])зач[её]т([^а-я]|$)/.test(t) && /поставь|оцен/.test(t) && !/-?\d/.test(t)) return say("Сколько из 10?");
   if (/непроверен|на проверк|очередь работ|мои работы/.test(t)) {
     const group = t.match(/[а-яё]{1,3}-\d-\d{2}-\d{2}/i)?.[0]?.toUpperCase();
     return step("Смотрю непроверенные работы.", "teacher_list_submissions", group ? { group } : {});
@@ -216,7 +310,7 @@ function parseTeacher(t: string, raw: string): Proposal | null {
   if (/доработ/.test(t) && /верн/.test(t)) {
     const comment = extractComment(raw);
     const bare = norm(raw.replace(/\s*(?:,)?\s*(?:с\s+комментарием|комментарий|коммент(?:арий|ом)?)\s*[:\-—]?[\s\S]*$/i, ""));
-    const name = bare.match(/работ[уы]\s+([а-яё]{4,})/)?.[1] ?? bare.match(/(сорокин\w*|волков\w*|громов\w*)/)?.[1] ?? "студент";
+    const name = bare.match(/работ[уы]\s+([а-яё]{4,})/)?.[1] ?? personName(bare.replace(/^верн\S*\s+на\s+доработку\s*/, "")) ?? "студент";
     const query = /лаб|индекс/.test(bare) ? "лаб" : "";
     return step("Готовлю возврат на доработку.", "teacher_return_homework", { studentName: name, query, comment });
   }
@@ -266,6 +360,10 @@ function parseTeacher(t: string, raw: string): Proposal | null {
     });
   }
   if (/объявлен/.test(t) && /групп/.test(t)) return step("Открываю объявление группе.", "open_page", { page: "teach_announce" });
+  if (/сводк/.test(t)) {
+    const discipline = disciplineHint(t) || t.replace(/.*сводк\S*\s+по\s*/, "");
+    return step("Собираю сводку.", "teacher_subject_summary", { discipline });
+  }
   if (/журнал/.test(t)) {
     const group = t.match(/[а-яё]{1,3}-\d-\d{2}-\d{2}/i)?.[0]?.toUpperCase();
     const discipline = disciplineHint(t);
@@ -281,6 +379,7 @@ function parseTeacher(t: string, raw: string): Proposal | null {
 }
 
 function parseStaff(t: string, raw: string): Proposal | null {
+  if (/журнал/.test(t)) return step("Открываю журнал.", "open_page", { page: "staff_journal" });
   const published = t.match(/опубликуй объявлени\S*\s*[:\-—]?\s*(.+)/);
   if (published?.[1]) {
     const needle = published[1].slice(0, 12).toLowerCase().replace(/ё/g, "е");
@@ -403,85 +502,130 @@ function gradingCommand(raw: string, t: string): Proposal | null {
   });
 }
 
+const POINT_WORDS: [RegExp, number][] = [
+  [/(^|[^а-я])пол([^а-я]|$)/, 0.5],
+  [/(^|[^а-я])ноль([^а-я]|$)/, 0],
+  [/(^|[^а-я])один([^а-я]|$)/, 1],
+  [/(^|[^а-я])два([^а-я]|$)/, 2],
+  [/(^|[^а-я])три([^а-я]|$)/, 3],
+  [/(^|[^а-я])четыре([^а-я]|$)/, 4],
+  [/(^|[^а-я])пять([^а-я]|$)/, 5],
+  [/(^|[^а-я])шесть([^а-я]|$)/, 6],
+  [/(^|[^а-я])семь([^а-я]|$)/, 7],
+  [/(^|[^а-я])восемь([^а-я]|$)/, 8],
+  [/(^|[^а-я])девять([^а-я]|$)/, 9],
+  [/(^|[^а-я])десять([^а-я]|$)/, 10],
+];
+
+const NAME_STOP = new Set("поставь поставьте оцени оценка оценку убери сними удали баллы балл балла баллов из за работу работу контрольную контрольная лабораторную лабораторная лабу лабы тест тесту вчера сегодня по базам данных программированию проге прога бд предмету неделю прошлой прошлую среду четверг понедельник вторник пятницу субботу этому эту индексы индекс".split(" "));
+
+function personName(raw: string) {
+  const cleaned = raw
+    .replace(/«[^»]*»/g, " ")
+    .replace(/\d+(?:[.,]\d+)?\s*(?:балл[а-яё]*)?\s*из\s*\d+/gi, " ")
+    .replace(/\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?/g, " ")
+    .replace(/\d{1,2}\s+(?:январ\w*|феврал\w*|март\w*|апрел\w*|ма[йя]\w*|июн\w*|июл\w*|август\w*|сентябр\w*|октябр\w*|ноябр\w*|декабр\w*)(?:\s+\d{4})?/gi, " ")
+    .replace(/по\s+(?:бд|базам(?:\s+данных)?|проге|прога|програм[а-яё]*|информац[а-яё]*(?:\s+технолог[а-яё]*)?|матан[а-яё]*)/gi, " ")
+    .replace(/(?:в|на)\s+прошл[а-яё]+\s+[а-яё]+/gi, " ")
+    .replace(/(?:убери|сними|удали)\s+оценк[а-яё]*/gi, " ");
+  const parts = cleaned.split(/[^А-Яа-яЁёA-Za-z]+/).filter(Boolean);
+  const kept = parts.filter((word) => {
+    const token = norm(word);
+    return token.length >= 3 && !NAME_STOP.has(token) && !POINT_WORDS.some(([pattern]) => pattern.test(` ${token} `)) && !/январ|феврал|ноябр|декабр|октябр|сентябр|август|апрел|восемнадцат|девятнадцат|двадцат|понедельник|вторник|четверг|пятниц|суббот|воскресен/.test(token);
+  });
+  if (!kept.length) return "";
+  const secondToken = kept[1] ? norm(kept[1]) : "";
+  const given = kept[1] && secondToken.length >= 4 && secondToken.length <= 10 && !/[аы]м$|ого$|ыми$/.test(secondToken) && !NAME_STOP.has(secondToken) && !parseWorkType(secondToken);
+  const second = given ? ` ${kept[1]}` : "";
+  return `${kept[0]}${second}`;
+}
+
+function gradeSlots(raw: string, t: string) {
+  const negative = t.match(/(^|[^\d])(-\d+(?:[.,]\d+)?)/);
+  if (negative) return { error: "Отрицательные баллы поставить нельзя." as const };
+  const numeric = t.match(/(\d+(?:[.,]\d+)?)(?:\s*(?:балл[а-я]*)?\s*из\s*(\d+))?/);
+  let points: number | null = null;
+  let maxPoints: number | null = null;
+  if (numeric && !(numeric.index != null && /[./]/.test(t.slice(Math.max(0, numeric.index - 1), numeric.index + numeric[0].length)) && numeric[1].includes(".") && numeric[1].split(/[.,]/)[1]?.length === 2 && !/балл|из/.test(numeric[0]))) {
+    const token = numeric[1];
+    const fractional = /[.,]\d$/.test(token);
+    const looksLikeDate = !fractional && /^\d{1,2}[./]\d{1,2}$/.test(token) && !/балл|из/.test(numeric[0]);
+    if (!looksLikeDate) {
+      points = Number(token.replace(",", "."));
+      if (numeric[2]) maxPoints = Number(numeric[2]);
+    }
+  }
+  if (points == null) {
+    const word = POINT_WORDS.find(([pattern]) => pattern.test(` ${t} `));
+    if (word) points = word[1];
+  }
+  if (points != null && (points < 0 || points > 1000)) return { error: "Баллы от 0 до 1000." as const };
+  if (points != null && Math.abs(points * 2 - Math.round(points * 2)) > 1e-6) return { error: "Баллы ставятся с шагом 0,5." as const };
+  const name = personName(raw);
+  const work = parseWorkType(raw);
+  const stripped = points != null && numeric && !/^\d{1,2}[./]\d{1,2}$/.test(numeric[1]) ? t.replace(numeric[0], " ") : t;
+  const date = /на прошлой неделе/.test(t) ? undefined : journalDate(stripped);
+  const quoted = raw.match(/«([^»]+)»/)?.[1] ?? raw.match(/(?:за|по)\s+((?:лабораторн|контрольн|семинар)[а-яё]*\s*:\s*[a-zа-яё0-9][^.,]{0,40})/i)?.[1];
+  const week = /на прошлой неделе/.test(t) ? "prev" as const : undefined;
+  return { points, maxPoints, name, work, date, quoted, week };
+}
+
 function journalCommand(raw: string, t: string): Proposal | null {
-  const letter = raw.match(/поставь\s+([а-яё]{3,})\s+([нбоу])(?=\s|$)/i);
-  if (letter && !/(^|\s)[2-5](?!\d)/.test(t)) {
-    const date = journalDate(raw);
-    if (!date) return null;
+  if (!/поставь|оцен|балл|явк/.test(t) && !parseWorkType(t) && !(disciplineHint(t) && /\d/.test(t))) return null;
+  const letter = raw.match(/поставь\s+([а-яё]{3,}(?:\s+[а-яё]{3,})?)\s+([нбоу])(?=\s|$)/i);
+  if (letter) {
+    const date = journalDate(raw) ?? moscowToday();
     const status = { н: "absent", б: "sick", о: "late", у: "excused" }[letter[2].toLowerCase()] ?? "absent";
+    const discipline = disciplineHint(t);
     return step("Отмечаю явку.", "teacher_set_attendance", {
       studentName: letter[1],
       date,
       status,
-      present: status === "present",
-      groupName: "БИ-3-26-04",
-      discipline: disciplineHint(t) || "Базы данных",
+      present: false,
+      ...(discipline ? { discipline } : {}),
     });
   }
-  if (/оцени/.test(t) && /работ|задан/.test(t) && !parseWorkType(t)) {
-    const quoted = raw.match(/«([^»]+)»/)?.[1] ?? "";
-    const score = Number(t.match(/на\s+([2-5])(?!\d)/)?.[1] ?? t.match(/([2-5])(?!\d)/)?.[1] ?? 0);
-    const name = t.match(/(сорокин\w*|волков\w*|громов\w*|белов\w*)/)?.[1] ?? "студент";
-    return step("Готовлю оценку за сданную работу.", "teacher_grade_homework", { studentName: name, query: quoted, score });
+  const slots = gradeSlots(raw, t);
+  if ("error" in slots) return /поставь|оцен|балл/.test(t) ? say(String(slots.error)) : null;
+  if (/оцени/.test(t) && /работ|задан/.test(t) && !slots.work && slots.name) {
+    const score = slots.points ?? Number(t.match(/на\s+([2-5])(?!\d)/)?.[1] ?? 0);
+    return step("Готовлю оценку за сданную работу.", "teacher_grade_homework", { studentName: slots.name, query: slots.quoted ?? "", score });
   }
-  const ru = (token: string) => Number(token.replace(",", "."));
-  const outOfFull = raw.match(/(\d+(?:[.,]\d+)?)\s*(?:балл[а-яё]*\s*)?из\s*(\d+)/iu);
-  const ball = raw.match(/(\d+(?:[.,]\d+)?)\s*балл/iu);
-  const spoken = t.match(/поставь\s+(\d+(?:[.,]\d+)?)(?!\d)/);
-  const spokenPoints = spoken ? ru(spoken[1]) : null;
-  const pointsToken = outOfFull?.[1] ?? ball?.[1] ?? (spoken && spokenPoints != null && (spokenPoints > 5 || spokenPoints === 0) ? spoken[1] : undefined);
-  const pointsValue = pointsToken == null ? null : ru(pointsToken);
-  const explicitMax = outOfFull ? Number(outOfFull[2]) : null;
-  if (pointsValue != null && Number.isFinite(pointsValue) && (pointsValue > 5 || pointsValue === 0 || explicitMax != null)) {
-    const points = pointsValue;
-    const name = raw.match(/(?:сорокин|волков|громов|белов)[а-яё]*/iu)?.[0]
-      ?? raw.match(/поставь\s+\d+(?:[.,]\d+)?(?:\s+из\s+\d+)?(?:\s+балл\w*)?\s+([А-ЯЁа-яё]{3,})/iu)?.[1];
-    const workPoints = parseWorkType(raw);
-    const datePoints = journalDate(raw);
-    if (name) {
-      return step("Готовлю баллы в журнал.", "teacher_set_mark", {
-        studentName: name,
-        points,
-        ...(explicitMax != null ? { maxPoints: explicitMax } : {}),
-        ...(workPoints ? { workType: workPoints.type, title: workPoints.title ?? WORK_TYPES[workPoints.type].label } : {}),
-        ...(datePoints ? { date: datePoints } : {}),
-        ...(disciplineHint(t) ? { discipline: disciplineHint(t) } : {}),
-      });
-    }
+  if (slots.points == null || !slots.name) return null;
+  const journalQuote = Boolean(slots.quoted && /лаборатор|контрол|семинар|индекс|:/.test(slots.quoted.toLowerCase()));
+  const columnTitle = Boolean(slots.quoted && /\d/.test(slots.quoted) && !/:/.test(slots.quoted));
+  const submission = !journalQuote && !slots.date && !slots.week && !columnTitle && (slots.work?.type === "lab" || (/работ|задан/.test(t) && !slots.work && !/лаборатор/.test(t)));
+  if (submission) {
+    const query = slots.quoted || (slots.work?.type === "lab" || /лаб/.test(t) ? "лаб" : "");
+    return step("Готовлю оценку за сданную работу.", "teacher_grade_homework", { studentName: slots.name.toLowerCase().replace(/у$/, ""), query, score: slots.points });
   }
-  const work = parseWorkType(raw);
-  const date = journalDate(raw);
-  const quoted = raw.match(/«([^»]+)»/)?.[1];
-  const journalish = Boolean(work && (work.type !== "lab" || date || quoted)) || Boolean(date && /[2-5]/.test(t));
-  if (!journalish || !/[2-5]/.test(t)) return null;
-  const score = t.match(/поставь\s+([2-5])(?!\d)/)?.[1]
-    ?? t.match(/поставь\s+[а-яё]{3,}\s+([2-5])(?!\d)/)?.[1]
-    ?? t.match(/([а-яё]{4,})\s+([2-5])(?!\d)/)?.[2]
-    ?? t.match(/на\s+([2-5])(?!\d)/)?.[1];
-  const name = raw.match(/поставь\s+[2-5]\s+([А-ЯЁа-яё]{3,})/iu)?.[1]
-    ?? raw.match(/поставь\s+([А-ЯЁа-яё]{3,})\s+[2-5]/iu)?.[1]
-    ?? raw.match(/([А-ЯЁа-яё]{4,})\s+[2-5]\s+за/iu)?.[1]
-    ?? raw.match(/«[^»]+»\s+([А-ЯЁа-яё]{4,})/iu)?.[1];
-  if (!score || !name) return null;
-  const outOf = raw.match(/из\s+(\d+)/iu);
+  const title = slots.quoted
+    ?.replace(/[«»"]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^лабораторн[а-яё]*/i, "Лабораторная")
+    .replace(/^контрольн[а-яё]*/i, "Контрольная")
+    .replace(/^семинар[а-яё]*/i, "Семинар");
+  const discipline = disciplineHint(t);
   return step("Готовлю баллы в журнал.", "teacher_set_mark", {
-    studentName: name,
-    points: Number(score),
-    value: Number(score),
-    ...(outOf ? { maxPoints: Number(outOf[1]) } : {}),
-    ...(work ? { workType: work.type, label: work.title ?? WORK_TYPES[work.type].label, title: quoted ?? work.title } : {}),
-    ...(quoted ? { title: quoted.replace(/^Лабораторную/i, "Лабораторная").replace(/^Контрольную/i, "Контрольная"), label: quoted.replace(/^Лабораторную/i, "Лабораторная") } : {}),
-    ...(date ? { date } : {}),
-    ...(disciplineHint(t) ? { discipline: disciplineHint(t) } : {}),
-    ...(work?.type === "credit" ? { kind: "credit" } : {}),
+    studentName: slots.name,
+    points: slots.points,
+    value: slots.points,
+    ...(slots.maxPoints != null ? { maxPoints: slots.maxPoints } : {}),
+    ...(slots.work ? { workType: slots.work.type, label: slots.work.title ?? WORK_TYPES[slots.work.type].label, title: title ?? slots.work.title } : {}),
+    ...(title ? { title, label: title } : {}),
+    ...(slots.date ? { date: slots.date } : {}),
+    ...(slots.week ? { week: slots.week } : {}),
+    ...(discipline ? { discipline } : {}),
+    ...(slots.work?.type === "credit" ? { kind: "credit" } : {}),
   });
 }
 
 function disciplineHint(t: string) {
-  if (/(^|[^а-яё])бд([^а-яё]|$)/.test(t) || /баз/.test(t)) return "базы данных";
-  if (/програм/.test(t)) return "программирование";
-  if (/информац/.test(t)) return "информационные технологии";
-  if (/матан|математическ/.test(t)) return "математический анализ";
+  if (/(^|[^а-яё])бд([^а-яё]|$)/.test(t) || /баз/.test(t)) return "Базы данных";
+  if (/прог/.test(t)) return "Программирование";
+  if (/информац/.test(t)) return "Информационные технологии в юридической деятельности";
+  if (/матан|математическ/.test(t)) return "Математический анализ";
   return "";
 }
 

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Toaster } from "sonner";
 import { Shell } from "./components/shell";
@@ -61,9 +61,20 @@ export function App() {
         </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
-      <Toaster position="bottom-right" offset={16} mobileOffset={{ bottom: "calc(13.5rem + env(safe-area-inset-bottom))" }} />
+      <ThemedToaster />
     </>
   );
+}
+
+function ThemedToaster() {
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
+  useEffect(() => {
+    const sync = () => setDark(document.documentElement.classList.contains("dark"));
+    const observer = new MutationObserver(sync);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+  return <Toaster theme={dark ? "dark" : "light"} position="bottom-right" offset={16} mobileOffset={{ bottom: "calc(13.5rem + env(safe-area-inset-bottom))" }} />;
 }
 
 function StaffGate({ children }: { children: ReactNode }) {

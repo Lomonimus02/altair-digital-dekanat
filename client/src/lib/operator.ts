@@ -16,6 +16,23 @@ function delay(ms: number, signal: AbortSignal) {
   });
 }
 
+function waitForPage(page: string, signal: AbortSignal, timeout = 2500) {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const timer = window.setTimeout(finish, timeout);
+    const onReady = (event: Event) => {
+      const detail = (event as CustomEvent<{ page?: string }>).detail;
+      if (!detail?.page || detail.page === page) finish();
+    };
+    function finish() {
+      window.clearTimeout(timer);
+      window.removeEventListener("altair-page-ready", onReady);
+      resolve();
+    }
+    window.addEventListener("altair-page-ready", onReady);
+  });
+}
+
 export async function waitForElement(selector: string, signal: AbortSignal, timeout = 4000) {
   const start = performance.now();
   while (!signal.aborted && performance.now() - start < timeout) {
@@ -42,26 +59,102 @@ export function moveCursor(element: Element | null, on: boolean) {
   }));
 }
 
-function reveal(element: HTMLElement) {
-  const covers = [...document.querySelectorAll("[data-agent-peek], .form-sticky, .mobile-nav-pill")]
-    .map((node) => node.getBoundingClientRect().top)
-    .filter((top) => top > 0 && top < window.innerHeight - 8);
-  const limit = (covers.length ? Math.min(...covers) : window.innerHeight) - 16;
+function visible(element: HTMLElement) {
   const box = element.getBoundingClientRect();
-  const behavior = reduced() ? "auto" : "smooth";
-  if (box.bottom > limit) window.scrollBy({ top: box.bottom - limit, behavior });
-  else if (box.top < 72) window.scrollBy({ top: box.top - 72, behavior });
+  const style = getComputedStyle(element);
+  return box.width > 0 && box.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+}
+
+function reveal(element: HTMLElement) {
+  const box = element.getBoundingClientRect();
+  const behavior = reduced() ? "auto" as const : "smooth" as const;
+  const topNodes = [...document.querySelectorAll("header, thead, [data-agent-peek]")];
+  const bottomNodes = [...document.querySelectorAll("[data-agent-sheet], .mobile-nav-pill, [data-agent-action='nav-agent']")];
+  const topLimit = Math.max(72, ...topNodes.map((node) => {
+    const edge = node.getBoundingClientRect();
+    return edge.bottom > 0 && edge.top < 160 ? edge.bottom : 0;
+  }));
+  const sheet = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--agent-sheet-h")) || 0;
+  const bottomLimit = Math.min(...bottomNodes.map((node) => node.getBoundingClientRect().top).filter((top) => top > 80), window.innerHeight - sheet) - 16;
+  if (box.top < topLimit) window.scrollBy({ top: box.top - topLimit - 8, behavior });
+  else if (box.bottom > bottomLimit) window.scrollBy({ top: box.bottom - bottomLimit, behavior });
+}
+
+function scrollParent(node: HTMLElement): HTMLElement | Window {
+  let current = node.parentElement;
+  while (current && current !== document.body) {
+    const style = getComputedStyle(current);
+    if (/(auto|scroll)/.test(style.overflowY)) return current;
+    current = current.parentElement;
+  }
+  return window;
+}
+
+function settle(node: HTMLElement | Window) {
+  return new Promise<void>((resolve) => {
+    let timer = window.setTimeout(done, reduced() ? 0 : 420);
+    const onScroll = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(done, 80);
+    };
+    function done() {
+      node.removeEventListener("scroll", onScroll);
+      resolve();
+    }
+    node.addEventListener("scroll", onScroll, { passive: true });
+  });
+}
+
+export async function scrollCellIntoView(cell: HTMLElement, grid: HTMLElement) {
+  const behavior = reduced() ? "auto" as const : "smooth" as const;
+  const nameCol = grid.querySelector("th.sticky.left-0");
+  const percentCol = grid.querySelector("th.sticky.right-0");
+  const nameW = nameCol instanceof HTMLElement ? nameCol.getBoundingClientRect().width : 120;
+  const percentW = percentCol instanceof HTMLElement ? percentCol.getBoundingClientRect().width : 56;
+  const gridBox = grid.getBoundingClientRect();
+  const box = cell.getBoundingClientRect();
+  const leftLimit = gridBox.left + nameW + 12;
+  const rightLimit = gridBox.right - percentW - 12;
+  let deltaX = 0;
+  if (box.left < leftLimit) deltaX = box.left - leftLimit;
+  else if (box.right > rightLimit) deltaX = box.right - rightLimit;
+  if (deltaX) grid.scrollBy({ left: deltaX, behavior });
+  const scroller = scrollParent(cell);
+  const reserved = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--agent-sheet-h")) || 240;
+  const header = document.querySelector("header");
+  const topLimit = Math.max(72, header instanceof HTMLElement ? header.getBoundingClientRect().bottom : 0) + 8;
+  const bottomLimit = window.innerHeight - reserved - 48;
+  const next = cell.getBoundingClientRect();
+  let deltaY = 0;
+  if (next.top < topLimit) deltaY = next.top - topLimit;
+  else if (next.bottom > bottomLimit) deltaY = next.bottom - bottomLimit;
+  const scrollByY = (distance: number) => {
+    const before = cell.getBoundingClientRect().top;
+    if (scroller instanceof Window) window.scrollBy({ top: distance, behavior: "auto" });
+    else scroller.scrollBy({ top: distance, behavior: "auto" });
+    if (Math.abs(cell.getBoundingClientRect().top - before) < 1) window.scrollBy({ top: distance, behavior: "auto" });
+  };
+  if (deltaY) scrollByY(deltaY);
+  const sheet = document.querySelector("[data-agent-sheet]");
+  if (sheet instanceof HTMLElement && sheet.getBoundingClientRect().height > 80) {
+    const sheetTop = sheet.getBoundingClientRect().top;
+    const placed = cell.getBoundingClientRect();
+    if (placed.bottom > sheetTop - 36) scrollByY(placed.bottom - sheetTop + 48);
+  }
+  if (deltaX) await settle(grid);
 }
 
 export async function glideTo(selector: string, signal: AbortSignal) {
   if (signal.aborted) return;
-  const element = document.querySelector(selector);
+  const mobile = window.matchMedia("(max-width: 767px)").matches;
+  const preferred = mobile && selector.includes("nav-journal") ? ".mobile-nav-pill [data-agent-action='nav-journal']" : selector;
+  const element = [...document.querySelectorAll(preferred)].find((node) => node instanceof HTMLElement && visible(node));
   if (!(element instanceof HTMLElement)) return;
   reveal(element);
   await wait(160, signal);
   moveCursor(element, true);
   element.classList.add("agent-shown");
-  window.setTimeout(() => element.classList.remove("agent-shown"), reduced() ? 0 : 900);
+  if (!element.hasAttribute("data-agent-live")) window.setTimeout(() => element.classList.remove("agent-shown"), reduced() ? 0 : 900);
   await wait(220, signal);
 }
 
@@ -99,29 +192,43 @@ export async function playTurn(input: {
 }) {
   const { tools, open, fields, fill, navigate, signal, onStep } = input;
   if (tools.some((tool) => ["teacher_set_mark", "teacher_set_attendance", "teacher_add_journal_column"].includes(tool))) {
-    onStep("Открываю журнал…");
+    const group = open ? new URL(open, "http://altair.local").searchParams.get("group") : "";
+    onStep(group ? `Открываю журнал ${group}…` : "Открываю журнал…");
     document.body.dataset.operator = "1";
     await glideTo("[data-agent-action='nav-journal']", signal);
     if (open) navigate(open);
+    await waitForPage("journal", signal);
     const params = open ? new URL(open, "http://altair.local").searchParams : null;
     const focus = params?.get("focus") ?? "";
     const student = params?.get("student") ?? "";
-    const cell = student && focus ? await waitForElement(`[data-agent-cell="${student}:${focus}"]`, signal) : null;
-    if (cell instanceof HTMLElement) {
-      cell.setAttribute("data-agent-live", "1");
-      await glideTo("[data-agent-live='1']", signal);
-      cell.click();
-      window.dispatchEvent(new CustomEvent("altair-open-cell", { detail: { id: cell.getAttribute("data-agent-cell") } }));
-      await wait(180, signal);
+    const cell = student && focus ? await waitForElement(`[data-agent-cell="${student}:${focus}"]`, signal, 2500) : null;
+    if (!(cell instanceof HTMLElement)) {
+      onStep("Не вижу нужную ячейку на экране");
+      return;
     }
-    const pairs = fill && Object.keys(fill).length ? Object.entries(fill) : [["journal-value", fields.find((field) => field.label === "Оценка")?.value ?? ""] as const];
-    for (const [name, value] of pairs) {
-      if (!name || !value) continue;
-      await glideTo(`[data-agent-field='${name}']`, signal);
-      await typeField(name, value, signal);
-    }
-    await glideTo("[data-agent-action='journal-save']", signal);
+    document.documentElement.style.setProperty("--agent-sheet-h", "240px");
+    const grid = cell.closest("[data-scroll-x]");
+    if (grid instanceof HTMLElement) await scrollCellIntoView(cell, grid);
+    cell.setAttribute("data-agent-live", "1");
+    await glideTo("[data-agent-live='1']", signal);
+    if (grid instanceof HTMLElement) await scrollCellIntoView(cell, grid);
     onStep("Жду подтверждение…");
+    return;
+  }
+  if (tools.includes("teacher_grade_homework")) {
+    onStep("Открываю работу…");
+    document.body.dataset.operator = "1";
+    if (open) navigate(open);
+    await wait(reduced() ? 0 : 240, signal);
+    await glideTo("[data-agent-field='homework-score']", signal);
+    await glideTo("[data-agent-action='teach-grade']", signal);
+    onStep("Жду подтверждение…");
+    return;
+  }
+  if (tools.includes("mark_notifications_read")) {
+    onStep("Открываю уведомления…");
+    if (open) navigate(open);
+    await glideTo("[data-agent-action='notification-read-all']", signal);
     return;
   }
   onStep(tools[0] ? "Открываю раздел…" : "Смотрю…");

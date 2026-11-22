@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { z } from "zod";
-import { academicPeriod, addDays, dueAtMoscow, formatRuDate, formatWeekSpan, longDay, mondayOf, moscowHour, moscowToday, nearestStudyDay, resolveWhen, shortDayDate, studyWeek } from "../../shared/src/dates";
-import { formatPercent, formatScore, gradeLabel, journalDateLabel, marksForTerm, pointsTotal, scalePoints, semesterBounds, validPoints, WORK_TYPES, type WorkType } from "../../shared/src/journal";
+import { academicPeriod, addDays, calendarDay, dueAtMoscow, formatRuDate, formatWeekSpan, isFutureDay, longDay, mondayOf, moscowHour, moscowToday, nearestStudyDay, resolveWhen, shortDayDate, studyWeek } from "../../shared/src/dates";
+import { formatPercent, formatScore, gradeLabel, journalDateLabel, marksForTerm, pointsTotal, rankTitle, scalePoints, semesterBounds, validPoints, WORK_TYPES, type WorkType } from "../../shared/src/journal";
 import {
   defaultPurpose,
   kindMeta,
@@ -92,7 +92,7 @@ import {
   loadForTeacher,
   type HomeworkKind,
 } from "./homework";
-import { addColumn, applyMark, clearMark, deleteColumn, editColumn, planMark, saveScheme, setTopic } from "./journal";
+import { addColumn, applyMark, clearMark, deleteColumn, editColumn, heldLessonsBetween, lessonChip, nearestHeldLessons, planMark, readScheme, saveScheme, setTopic } from "./journal";
 import { triageRequest } from "./triage";
 import { getConfig } from "./config";
 
@@ -147,7 +147,7 @@ export async function perform(
   const relaxed = relaxArgs({ ...(rawArgs ?? {}) });
   for (const [key, value] of Object.entries(relaxed)) if (value === undefined) delete relaxed[key];
   const parsed = def.schema.safeParse(relaxed);
-  if (!parsed.success) throw badRequest(parsed.error.issues.map((issue) => issue.message).join("; ") || "Проверьте поля");
+  if (!parsed.success) throw badRequest(parsed.error.issues.map((issue) => russianIssue(issue)).join("; ") || "Проверьте поля");
   const args = parsed.data as Record<string, unknown>;
 
   if ((name === "submit_homework" || name === "teacher_grade_homework" || name === "teacher_return_homework") && !args.assignmentId) {
@@ -172,7 +172,7 @@ export async function perform(
     } else {
       const found = await resolveTeacherSubmission(user, String(args.studentName), String(args.query ?? ""));
       if (!("assignmentId" in found)) {
-        if (!found.options.length) return { ok: true, summary: "Сданной работы не нашёл." };
+        if (!found.options.length) return { ok: true, summary: args.query ? `Сданной работы «${args.query}» не нашёл.` : "У этого студента нет работ на проверке." };
         const clarificationId = await saveClarification(user.id, name, args);
         return {
           ok: true,
@@ -186,6 +186,51 @@ export async function perform(
       args.groupName = found.groupName;
       args.discipline = found.discipline;
       args.workTitle = found.title;
+      const scored = await getDb().select({ score: submissions.score, fullName: users.fullName }).from(submissions).innerJoin(users, eq(users.id, submissions.studentId)).where(eq(submissions.assignmentId, Number(args.assignmentId)));
+      const hit = scored.find((row) => samePerson(String(args.studentName), row.fullName));
+      args.previous = hit?.score == null ? null : Number(hit.score);
+    }
+  }
+  if (name === "teacher_set_attendance" && (!args.groupName || !args.discipline)) {
+    const found = await resolveTaughtStudent(user, String(args.studentName), String(args.discipline ?? ""));
+    if (!("studentName" in found)) {
+      if (!found.options.length) {
+        const load = await loadForTeacher(user.id);
+        const asked = String(args.discipline ?? "");
+        const teachesSubject = !asked || load.some((row) => row.discipline.toLowerCase().includes(asked.toLowerCase().slice(0, 6)));
+        return { ok: true, summary: asked && !teachesSubject ? "Вы не ведёте этот предмет." : "Такого студента в ваших группах нет." };
+      }
+      const clarificationId = await saveClarification(user.id, name, args);
+      return {
+        ok: true,
+        summary: "Несколько предметов. Куда поставить явку?",
+        choices: found.options.map((row) => ({ label: row.discipline, clarificationId, entityId: `${row.groupName}||${row.discipline}` })),
+      };
+    }
+    args.groupName = found.groupName;
+    args.discipline = found.discipline;
+    args.studentName = found.studentName;
+  }
+  if (name === "teacher_set_attendance" && args.groupName && args.discipline && args.date) {
+    if (isFutureDay(String(args.date))) return { ok: true, summary: "Дату из будущего ставить нельзя." };
+    const held = await heldLessonsBetween(String(args.groupName), String(args.discipline), String(args.date), String(args.date));
+    if (!held.length) {
+      const options = await nearestHeldLessons(String(args.groupName), String(args.discipline), moscowToday(), 3);
+      const list = options.map((row) => lessonChip(row.date)).join(", ");
+      const clarificationId = await saveClarification(user.id, name, args);
+      return {
+        ok: true,
+        summary: `${lessonChip(String(args.date)).replace(/ \(.*\)$/, "")} пары по «${args.discipline}» не было.${list ? ` Ближайшие пары: ${list}.` : ""}`,
+        choices: options.map((row) => ({ label: lessonChip(row.date), clarificationId, entityId: row.date })),
+      };
+    }
+  }
+  if (name === "teacher_set_attendance" && args.groupName && args.discipline && args.date && args.studentName) {
+    const student = await getDb().select().from(users).where(and(eq(users.role, "student"), eq(users.groupName, String(args.groupName))));
+    const person = student.find((row) => samePerson(String(args.studentName), row.fullName));
+    if (person) {
+      const prior = (await getDb().select().from(attendance).where(and(eq(attendance.studentId, person.id), eq(attendance.discipline, String(args.discipline)), eq(attendance.lessonDate, String(args.date)))).limit(1))[0];
+      args.previousStatus = prior?.status ?? "—";
     }
   }
   if (name === "teacher_issue_assignment" && !args.discipline) {
@@ -203,10 +248,46 @@ export async function perform(
     }
     args.discipline = taught[0].discipline;
   }
+  if (name === "teacher_set_mark" && !args.discipline && args.title) {
+    const title = String(args.title);
+    const load = await loadForTeacher(user.id);
+    const owns = (group: string, discipline: string) => load.some((row) => row.groupName === group && row.discipline === discipline);
+    const ranked = <T extends { title: string }>(rows: T[]) => rows
+      .map((row) => ({ row, score: rankTitle(title, row.title) }))
+      .filter((item) => item.score >= 70)
+      .sort((a, b) => b.score - a.score);
+    const columns = ranked((await getDb().select().from(journalColumns)).filter((row) => owns(row.groupName, row.discipline)));
+    const works = columns.length ? [] : ranked(await getDb().select().from(assignments).where(eq(assignments.teacherId, user.id)));
+    const pool = columns.length ? columns : works;
+    const close = pool.filter((item) => pool[0].score - item.score <= 15);
+    if (close.length > 1) {
+      const clarificationId = await saveClarification(user.id, name, args);
+      return {
+        ok: true,
+        summary: "Несколько похожих работ. Какую?",
+        choices: close.map((item) => ({ label: item.row.title, clarificationId, entityId: "lessonDate" in item.row ? `col:${item.row.id}` : item.row.title })),
+      };
+    }
+    const hit = close[0]?.row;
+    if (hit && owns(hit.groupName, hit.discipline)) {
+      args.groupName = hit.groupName;
+      args.discipline = hit.discipline;
+      if ("lessonDate" in hit) {
+        args.columnId = hit.id;
+        args.date = hit.lessonDate;
+      }
+    }
+  }
   if (name === "teacher_set_mark" && !args.columnId && (!args.groupName || !args.discipline)) {
     const found = await resolveTaughtStudent(user, String(args.studentName), String(args.discipline ?? ""));
     if (!("studentName" in found)) {
-      if (!found.options.length) return { ok: true, summary: "Такого студента в ваших группах нет." };
+      if (!found.options.length) {
+        const load = await loadForTeacher(user.id);
+        const asked = String(args.discipline ?? "");
+        const teachesSubject = !asked || load.some((row) => row.discipline.toLowerCase().includes(asked.toLowerCase().slice(0, 6)));
+        if (args.week === "prev") return { ok: true, summary: "На прошлой неделе не вижу такого студента. Назовите фамилию." };
+        return { ok: true, summary: asked && !teachesSubject ? "Вы не ведёте этот предмет." : "Такого студента в ваших группах нет." };
+      }
       const clarificationId = await saveClarification(user.id, name, args);
       const groups = [...new Set(found.options.map((row) => row.groupName))];
       const group = groups.length === 1 ? groups[0] : "";
@@ -233,7 +314,28 @@ export async function perform(
       const pendingMax = args.maxPoints == null ? null : Number(args.maxPoints);
       if (pendingMax == null || pendingPoints > pendingMax) args.maxPoints = Math.min(1000, Math.max(1, Math.ceil(pendingPoints)));
     }
+    if (args.week === "prev" && !args.date && args.groupName && args.discipline) {
+      const today = moscowToday();
+      const from = mondayOf(addDays(today, -7));
+      const lessons = await heldLessonsBetween(String(args.groupName), String(args.discipline), from, addDays(from, 5));
+      if (!lessons.length) return { ok: true, summary: "На прошлой неделе пар по этому предмету не было." };
+      const clarificationId = await saveClarification(user.id, name, args);
+      return {
+        ok: true,
+        summary: "На прошлой неделе несколько пар. Какой день?",
+        choices: lessons.map((row) => ({ label: lessonChip(row.date), clarificationId, entityId: row.date })),
+      };
+    }
     const plan = await planMark(user, args);
+    if ("noLesson" in plan && plan.noLesson) {
+      const list = plan.options.map((row) => lessonChip(row.date)).join(", ");
+      const clarificationId = await saveClarification(user.id, name, args);
+      return {
+        ok: true,
+        summary: `${lessonChip(plan.date).replace(/ \(.*\)$/, "")} пары по «${plan.discipline}» не было.${list ? ` Ближайшие пары: ${list}.` : ""}`,
+        choices: plan.options.map((row) => ({ label: lessonChip(row.date), clarificationId, entityId: row.date })),
+      };
+    }
     if ("choices" in plan && plan.choices) {
       const clarificationId = await saveClarification(user.id, name, args);
       return {
@@ -326,6 +428,40 @@ export async function perform(
     args.discipline = names[0].discipline;
   }
 
+  if (name === "teacher_clear_mark" && !args.markId && args.studentName) {
+    if (!args.groupName || !args.discipline) {
+      const found = await resolveTaughtStudent(user, String(args.studentName), String(args.discipline ?? ""));
+      if (!("studentName" in found)) {
+        if (!found.options.length) return { ok: true, summary: args.discipline ? "Вы не ведёте этот предмет." : "Такого студента в ваших группах нет." };
+        const clarificationId = await saveClarification(user.id, name, args);
+        return { ok: true, summary: "Несколько предметов. Где снять оценку?", choices: found.options.map((row) => ({ label: row.discipline, clarificationId, entityId: `${row.groupName}||${row.discipline}` })) };
+      }
+      args.groupName = found.groupName;
+      args.discipline = found.discipline;
+      args.studentName = found.studentName;
+    }
+    const columns = await getDb().select().from(journalColumns).where(and(
+      eq(journalColumns.groupName, String(args.groupName)),
+      eq(journalColumns.discipline, String(args.discipline)),
+      ...(args.date ? [eq(journalColumns.lessonDate, String(args.date))] : []),
+      ...(args.workType ? [eq(journalColumns.workType, String(args.workType))] : []),
+    ));
+    const students = await getDb().select().from(users).where(and(eq(users.role, "student"), eq(users.groupName, String(args.groupName))));
+    const person = students.find((row) => samePerson(String(args.studentName), row.fullName));
+    if (!person) return { ok: true, summary: "Такого студента в этой группе нет." };
+    const ids = columns.map((column) => column.id);
+    const marked = ids.length ? await getDb().select().from(marks).where(and(eq(marks.studentId, person.id), inArray(marks.columnId, ids))) : [];
+    if (marked.length !== 1) return { ok: true, summary: marked.length ? "Несколько оценок. Уточните дату и тип работы." : "Такой оценки нет." };
+    args.markId = marked[0].id;
+    args.previous = marked[0].points;
+  }
+  if (name === "teacher_grade_homework" && ctx.source === "agent" && args.assignmentId != null && args.score != null) {
+    const detail = await getTeacherAssignment(user, Number(args.assignmentId));
+    const max = Number(detail.maxPoints ?? detail.maxScore ?? 10);
+    const score = Number(args.score);
+    if (Number.isFinite(score) && score > max) return { ok: true, summary: `Максимум ${max}. ${scoreText(score)} больше этого максимума.` };
+  }
+
   if (def.risk === "consequential" && ctx.source === "agent" && !ctx.confirmed) {
     const preview = await buildPreview(user, def.name, args);
     const pendingId = randomUUID();
@@ -412,6 +548,15 @@ async function writeAudit(
   return row.id;
 }
 
+function russianIssue(issue: { code: string; message: string; path: PropertyKey[] }) {
+  const path = issue.path.map(String).join(".");
+  if (/points|value|score/.test(path) && /greater than or equal|too_small|min/i.test(`${issue.code} ${issue.message}`)) return "Баллы не могут быть отрицательными";
+  if (/step|multiple|0,5|0.5/i.test(issue.message)) return "Баллы ставятся с шагом 0,5";
+  if (issue.code === "invalid_string" || /regex|дата/i.test(issue.message)) return "Нужна дата в виде гггг-мм-дд";
+  if (/[A-Za-z]{4,}/.test(issue.message)) return "Проверьте поля";
+  return issue.message || "Проверьте поля";
+}
+
 function scoreText(value: unknown) {
   if (value == null || value === "") return "—";
   const n = typeof value === "number" ? value : Number(String(value).replace(",", "."));
@@ -490,7 +635,6 @@ async function buildPreview(user: PublicUser, name: string, args: Record<string,
     const date = String(args.date ?? moscowToday());
     const lines = [
       args.willCreate ? `Создам колонку «${args.title ?? work?.label ?? "Работа"}» ${date.slice(8, 10)}.${date.slice(5, 7)}.` : "",
-      args.noLesson ? `${date.slice(8, 10)}.${date.slice(5, 7)} пары по «${args.discipline}» нет — всё равно поставить?` : "",
     ].filter(Boolean);
     return {
       title: "Поставить оценку",
@@ -524,6 +668,7 @@ async function buildPreview(user: PublicUser, name: string, args: Record<string,
         { label: "Предмет", value: String(args.discipline ?? "предмет") },
         ...(work && work !== "работа" ? [{ label: "Работа", value: work }] : []),
         { label: "Оценка", value: String(args.score ?? args.value) },
+        { label: "Было", value: args.previous == null || args.previous === "" ? "—" : scoreText(args.previous) },
         ...(args.comment ? [{ label: "Комментарий", value: String(args.comment) }] : []),
       ],
     };
@@ -561,6 +706,13 @@ async function buildPreview(user: PublicUser, name: string, args: Record<string,
   }
   if (name === "teacher_update_grading") {
     const work = args.workType ? WORK_TYPES[String(args.workType) as WorkType] : null;
+    const current = args.groupName && args.discipline ? await readScheme(String(args.groupName), String(args.discipline)) : null;
+    const rule = current && args.workType ? current.defaults[String(args.workType) as WorkType] : null;
+    const was = [
+      rule && args.maxPoints != null ? `максимум ${rule.maxPoints}` : "",
+      rule && args.weight != null ? `вес ${rule.weight}` : "",
+      current && args.excellent != null ? `отлично ${current.excellent}` : "",
+    ].filter(Boolean).join(", ");
     return {
       title: "Система оценивания",
       summary: "Пороги и веса применятся к этому предмету.",
@@ -570,6 +722,33 @@ async function buildPreview(user: PublicUser, name: string, args: Record<string,
         ...(work ? [{ label: "Работа", value: work.label }] : []),
         ...(args.maxPoints != null ? [{ label: "Максимум", value: String(args.maxPoints) }] : []),
         ...(args.weight != null ? [{ label: "Вес", value: String(args.weight) }] : []),
+        { label: "Было", value: was || "—" },
+      ],
+    };
+  }
+  if (name === "teacher_clear_mark") {
+    return {
+      title: "Снять оценку",
+      summary: "Оценка исчезнет из журнала. Это нужно подтвердить.",
+      fields: [
+        { label: "Студент", value: String(args.studentName ?? "—") },
+        { label: "Предмет", value: String(args.discipline ?? "—") },
+        ...(args.date ? [{ label: "Дата", value: journalDateLabel(String(args.date)) }] : []),
+        { label: "Было", value: args.previous == null || args.previous === "" ? "—" : scoreText(args.previous) },
+      ],
+    };
+  }
+  if (name === "teacher_set_attendance") {
+    const previous = args.previousStatus ? String(args.previousStatus) : "—";
+    return {
+      title: "Отметить явку",
+      summary: "Явка попадёт в журнал.",
+      fields: [
+        { label: "Студент", value: String(args.studentName) },
+        { label: "Предмет", value: String(args.discipline ?? "—") },
+        { label: "Дата", value: journalDateLabel(String(args.date)) },
+        { label: "Статус", value: String(args.status ?? (args.present ? "present" : "absent")) },
+        { label: "Было", value: previous },
       ],
     };
   }
@@ -839,7 +1018,7 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
       .values({ userId: user.id, title: String(args.title), dueAt })
       .returning();
     return {
-      summary: `Напоминание «${row.title}» стоит на ${formatRuDate(dueAt.slice(0, 10))} в ${String(args.time)}.`,
+      summary: `Напоминание «${row.title}» стоит на ${formatRuDate(calendarDay(dueAt))} в ${String(args.time)}.`,
       ui: [{ type: "invalidate", keys: ["brief"] }, { type: "navigate", to: "/", highlight: "today" }],
       reversible: { undo: { type: "reminder", id: row.id } },
     };
@@ -1311,7 +1490,27 @@ async function undoAudit(user: PublicUser, auditId: number): Promise<Outcome> {
     await getDb().delete(marks).where(eq(marks.id, undo.markId));
   } else if (undo.type === "mark_cell") {
     if (undo.created || !undo.prev) await getDb().delete(marks).where(eq(marks.id, undo.markId));
-    else await getDb().update(marks).set({ value: undo.prev.value, points: undo.prev.points == null ? null : String(undo.prev.points), comment: undo.prev.comment, label: undo.prev.label, kind: undo.prev.kind, awardedOn: undo.prev.awardedOn }).where(eq(marks.id, undo.markId));
+    else {
+      const prev = undo.prev;
+      await getDb().update(marks).set({
+        value: prev.value,
+        points: prev.points == null ? null : String(prev.points),
+        comment: prev.comment,
+        label: prev.label,
+        kind: prev.kind,
+        awardedOn: prev.awardedOn,
+        teacherId: prev.teacherId ?? null,
+        columnId: prev.columnId ?? null,
+        ...(prev.updatedAt ? { updatedAt: prev.updatedAt } : {}),
+      }).where(eq(marks.id, undo.markId));
+    }
+    if (undo.createdDisciplineId) {
+      const left = await getDb().select({ id: marks.id }).from(marks).where(eq(marks.disciplineId, undo.createdDisciplineId)).limit(1);
+      if (!left[0]) {
+        const { disciplines } = await import("./db/schema");
+        await getDb().delete(disciplines).where(eq(disciplines.id, undo.createdDisciplineId));
+      }
+    }
     if (undo.created) await getDb().delete(notifications).where(eq(notifications.href, `/grades?view=table&focus=${undo.markId}`));
     else if (undo.notice?.id) {
       if (undo.notice.previousBody == null) await getDb().delete(notifications).where(eq(notifications.id, undo.notice.id));
@@ -1322,7 +1521,22 @@ async function undoAudit(user: PublicUser, auditId: number): Promise<Outcome> {
       if (!left[0]) await getDb().delete(journalColumns).where(eq(journalColumns.id, undo.createdColumnId));
     }
   } else if (undo.type === "mark_restore") {
-    await getDb().insert(marks).values(undo.row);
+    const row = undo.row;
+    await getDb().insert(marks).values({
+      id: row.id,
+      disciplineId: row.disciplineId,
+      studentId: row.studentId,
+      columnId: row.columnId,
+      label: row.label,
+      value: row.value,
+      kind: row.kind,
+      awardedOn: row.awardedOn,
+      comment: row.comment,
+      teacherId: row.teacherId,
+      points: row.points == null ? null : String(row.points),
+      ...(row.updatedAt ? { updatedAt: row.updatedAt } : {}),
+    });
+    await getDb().execute(sql`select setval(pg_get_serial_sequence('marks', 'id'), (select max(id) from marks))`);
   } else if (undo.type === "journal_column") {
     const column = undo.column as { id?: number; removed?: boolean; restore?: boolean; groupName?: string; discipline?: string; lessonDate?: string; workType?: string; title?: string; maxScore?: number; weight?: string; createdBy?: number; scheduleItemId?: number | null };
     if (column.removed && column.id) {
@@ -1333,24 +1547,41 @@ async function undoAudit(user: PublicUser, auditId: number): Promise<Outcome> {
         title: String(column.title),
         workType: String(column.workType),
         maxScore: Number(column.maxScore),
+        maxPoints: Number((column as { maxPoints?: number }).maxPoints ?? column.maxScore),
         weight: String(column.weight),
         lessonDate: String(column.lessonDate),
       }).where(eq(journalColumns.id, column.id));
     } else if (column.groupName) {
+      const stored = column as { maxPoints?: number };
       const [created] = await getDb().insert(journalColumns).values({
+        ...(column.id ? { id: column.id } : {}),
         groupName: String(column.groupName),
         discipline: String(column.discipline),
         lessonDate: String(column.lessonDate),
         workType: String(column.workType),
         title: String(column.title),
         maxScore: Number(column.maxScore ?? 5),
+        maxPoints: Number(stored.maxPoints ?? column.maxScore ?? 10),
         weight: String(column.weight ?? 1),
         createdBy: Number(column.createdBy ?? user.id),
         scheduleItemId: column.scheduleItemId ?? null,
       }).returning();
       for (const mark of undo.marks) {
-        const row = mark as { studentId: number; disciplineId: number; label: string; value: number | null; kind: string; awardedOn: string | null; comment: string | null; teacherId: number | null };
-        await getDb().insert(marks).values({ ...row, columnId: created.id });
+        const row = mark as { id?: number; studentId: number; disciplineId: number; label: string; value: number | null; points?: string | number | null; kind: string; awardedOn: string | null; comment: string | null; teacherId: number | null; updatedAt?: string };
+        await getDb().insert(marks).values({
+          ...(row.id ? { id: row.id } : {}),
+          studentId: row.studentId,
+          disciplineId: row.disciplineId,
+          label: row.label,
+          value: row.value,
+          points: row.points == null ? null : String(row.points),
+          kind: row.kind,
+          awardedOn: row.awardedOn,
+          comment: row.comment,
+          teacherId: row.teacherId,
+          columnId: created.id,
+          ...(row.updatedAt ? { updatedAt: row.updatedAt } : {}),
+        });
       }
     }
   } else if (undo.type === "grading") {
@@ -1500,6 +1731,8 @@ async function buildPageTarget(user: PublicUser, args: Record<string, unknown>) 
       return { to: `/regulations${suffix}`, highlight: "regulations" };
     case "staff_inbox":
       return { to: "/staff", highlight: "inbox" };
+    case "staff_journal":
+      return { to: "/staff/journal", highlight: "journal" };
     case "staff_announce":
       return { to: "/staff/announcements", highlight: "announcements" };
     case "staff_request":
@@ -1597,8 +1830,9 @@ export async function runTurn(
       proposal = { say: parsed.say, steps: parsed.steps };
       mode = "server";
       caption = "Шаги предложила серверная модель";
-    } catch {
+    } catch (error) {
       proposal = null;
+      if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) caption = "Модель не ответила — локальные правила";
     }
   } else if (input.mode === "cloud" && getConfig().cloudEnabled) {
     try {
@@ -1615,7 +1849,7 @@ export async function runTurn(
     const names = user.role === "student" ? await disciplineNames(user.id) : [];
     proposal = parseIntent(input.message, user.role, names);
     mode = "fallback";
-    caption = "Локальный режим";
+    if (caption !== "Модель не ответила — локальные правила") caption = "Локальный режим";
   }
 
   const steps: { label: string; status: "ok" | "error" | "skipped"; detail?: string; tool?: string }[] = [];
@@ -1628,7 +1862,8 @@ export async function runTurn(
   let undo: { auditId: number; label: string } | undefined;
   let fill: Record<string, string> | undefined;
   let stopped = false;
-  for (const call of proposal.steps) {
+  for (let index = 0; index < proposal.steps.length; index += 1) {
+    const call = proposal.steps[index];
     const label = stepLabel(call.tool, call.args);
     if (stopped) {
       steps.push({ label, status: "skipped", detail: "Ждёт подтверждения предыдущего шага.", tool: call.tool });
@@ -1647,6 +1882,11 @@ export async function runTurn(
         confirm = result.confirm;
         fill = result.fill;
         stopped = true;
+        const rest = proposal.steps.slice(index + 1).map((item) => ({ tool: item.tool, args: item.args ?? {} }));
+        if (rest.length) {
+          const { getPool } = await import("./db/client");
+          await getPool().query("update pending_actions set preview = coalesce(preview, '{}'::jsonb) || jsonb_build_object('queue', $2::jsonb) where id = $1", [result.confirm.pendingId, JSON.stringify(rest)]);
+        }
       }
     } catch (error) {
       const detail = error instanceof HttpError ? error.message : "Не получилось выполнить шаг.";
@@ -1654,7 +1894,8 @@ export async function runTurn(
     }
   }
   const details = steps.map((step) => step.detail).filter((detail): detail is string => Boolean(detail));
-  const say = details.length ? details.join("\n\n") : proposal.say || "Уточните, пожалуйста, что сделать.";
+  const queued = proposal.steps.length > 1 || /не разобрал/i.test(proposal.say) ? proposal.say : "";
+  const say = details.length ? [queued, ...details].filter(Boolean).join("\n\n") : proposal.say || "Уточните, пожалуйста, что сделать.";
   let nextUi = dedupeUi(ui);
   let link: { to: string; label: string } | undefined;
   const nav = nextUi.find((item) => item.type === "navigate");
@@ -1755,8 +1996,11 @@ export async function clarifyChoice(user: PublicUser, clarificationId: string, e
     args.scheduleItemId = Number(entityId);
   } else if (row.tool === "teacher_issue_assignment") {
     args.discipline = entityId;
-  } else if (row.tool === "teacher_update_grading" || row.tool === "teacher_set_mark") {
-    if (entityId === "col:new") args.forceNew = true;
+  } else if (row.tool === "teacher_update_grading" || row.tool === "teacher_set_mark" || row.tool === "teacher_set_attendance" || row.tool === "teacher_clear_mark") {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(entityId)) {
+      args.date = entityId;
+      delete args.week;
+    } else if (entityId === "col:new") args.forceNew = true;
     else if (entityId === "fit:fresh") {
       args.fit = "fresh";
       args.forceNew = true;
@@ -1768,6 +2012,7 @@ export async function clarifyChoice(user: PublicUser, clarificationId: string, e
       args.points = points;
     } else if (entityId.startsWith("fit:")) args.fit = entityId.slice(4);
     else if (entityId.startsWith("col:")) args.columnId = Number(entityId.slice(4));
+    else if (!entityId.includes("||")) args.title = entityId;
     else {
       const [groupName, discipline] = entityId.split("||");
       args.groupName = groupName;
@@ -1820,7 +2065,22 @@ export async function confirmPending(user: PublicUser, pendingId: string) {
   if (!claimed[0]) throw new HttpError(409, "consumed", "Это подтверждение уже использовано.");
   try {
     const result = await perform(user, row.action, row.args, { source: "agent", confirmed: true });
-    return { ...result, cards: result.card ? [result.card] : undefined };
+    const queue = (row.preview as { queue?: { tool: string; args?: Record<string, unknown> }[] }).queue ?? [];
+    if (!queue.length) return { ...result, cards: result.card ? [result.card] : undefined };
+    const [next, ...more] = queue;
+    const follow = await perform(user, next.tool, next.args ?? {}, { source: "agent", confirmed: false });
+    if (follow.confirm && more.length) {
+      const { getPool } = await import("./db/client");
+      await getPool().query("update pending_actions set preview = coalesce(preview, '{}'::jsonb) || jsonb_build_object('queue', $2::jsonb) where id = $1", [follow.confirm.pendingId, JSON.stringify(more)]);
+    }
+    return {
+      ...result,
+      summary: `${result.summary}\n\nДальше по очереди: ${follow.summary}`,
+      confirm: follow.confirm,
+      choices: follow.choices,
+      cards: result.card ? [result.card] : undefined,
+      ui: [...(result.ui ?? []), ...(follow.ui ?? [])],
+    };
   } catch (error) {
     await getDb().update(pendingActions).set({ consumedAt: null }).where(eq(pendingActions.id, pendingId));
     throw error;

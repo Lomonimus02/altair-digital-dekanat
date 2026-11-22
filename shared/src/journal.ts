@@ -163,6 +163,23 @@ export function simpleAverage(items: { value: number | null; maxScore: number; w
   return weightedAverage(items.map((item) => ({ ...item, weight: item.workType === "credit" ? 0 : 1 })));
 }
 
+/** 100 — то же название, 70+ — совпали отличительные слова. 0 — не то. */
+export function rankTitle(query: string, title: string): number {
+  const fold = (value: string) => value.toLowerCase().replace(/ё/g, "е").replace(/[«»"'`:.,]/g, " ").replace(/\s+/g, " ").trim();
+  const stem = (word: string) => word.replace(/(ую|ая|ой|ый|ий|ами|ом|ем|а|я|у|ю|е|ы|и)$/u, "");
+  const tokens = (value: string) => fold(value).split(" ").filter((word) => word.length >= 3).map(stem);
+  const left = tokens(query);
+  const right = tokens(title);
+  if (!left.length || !right.length) return 0;
+  if (fold(query) === fold(title)) return 100;
+  const hit = (word: string) => right.some((item) => item === word || item.startsWith(word) || word.startsWith(item));
+  const generic = /^(лаборатор|контрол|семинар|работ|задан|текущ)/;
+  const distinctive = left.filter((word) => !generic.test(word));
+  if (distinctive.length && !distinctive.every(hit)) return 0;
+  if (left.every(hit)) return distinctive.length ? 90 : 50;
+  return 0;
+}
+
 export function parseWorkType(text: string): { type: WorkType; title?: string } | null {
   const t = text.toLowerCase().replace(/ё/g, "е");
   if (/самостоят/.test(t)) return { type: "control", title: "Самостоятельная" };
@@ -185,7 +202,8 @@ export function journalDate(text: string, today = moscowToday()): string | undef
   if (/вчера/.test(t)) return addDays(today, -1);
   const asked = scheduleAsk(text, [], today, "past");
   if (asked?.date) return asked.date;
-  if (asked?.when === "today" || asked?.when === "tomorrow" || asked?.when === "day_after") return resolveWhen(asked.when, today).focus;
+  if (asked?.when === "today") return today;
+  if (asked?.when === "tomorrow" || asked?.when === "day_after") return resolveWhen(asked.when, today).focus;
   return undefined;
 }
 

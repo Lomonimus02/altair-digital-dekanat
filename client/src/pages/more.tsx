@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { moscowToday } from "@shared/dates";
 import { STATUS_LABEL, type RequestStatus } from "@shared/domain";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
@@ -30,7 +31,7 @@ export function NotificationsPage() {
   };
   return (
     <div className="stagger space-y-3" data-agent-target="notifications">
-      <div className="sticky top-0 z-20 space-y-2 bg-[var(--bg,transparent)] py-1">
+      <div className="notice-head sticky top-0 z-20 -mx-4 space-y-2 px-4 pb-5 pt-1">
         <h1>Уведомления</h1>
         {showRead || items.length === 0 ? null : <Button className="h-11 w-full whitespace-nowrap" variant="glass" data-agent-action="notification-read-all" onClick={() => mark("all")}>Прочитать все</Button>}
       </div>
@@ -112,7 +113,7 @@ function SwipeNote({ children, onRead, unread = false }: { children: ReactNode; 
 
 function noteBucket(note: Note) {
   const day = (note.createdAt ?? "").slice(0, 10);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = moscowToday();
   if (!day || day === today) return "Сегодня";
   const age = (Date.parse(today) - Date.parse(day)) / 86_400_000;
   return age < 7 ? "На неделе" : "Раньше";

@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
-import { addDays, formatRuDate, moscowNow, moscowToday, nearestStudyDay } from "../../shared/src/dates";
+import { addDays, calendarDay, formatRuDate, moscowNow, moscowToday, nearestStudyDay } from "../../shared/src/dates";
 import type { PublicUser } from "../../shared/src/domain";
-import { defaultWorkRule, formatScore, validPoints, type WorkType } from "../../shared/src/journal";
+import { defaultWorkRule, formatScore, rankTitle, validPoints, type WorkType } from "../../shared/src/journal";
 import { matchDiscipline } from "../../shared/src/parser";
 import { samePerson, toDative } from "../../shared/src/names";
 import { getDb } from "./db/client";
@@ -569,11 +569,21 @@ export async function resolveStudentAssignment(user: PublicUser, subject: string
 export async function resolveTeacherSubmission(user: PublicUser, studentName: string, query: string) {
   const queue = await teacherQueue(user);
   let rows = queue.filter((row) => samePerson(studentName, row.studentName));
-  const q = query.toLowerCase().replace(/ё/g, "е");
-  if (/лаб/.test(q)) rows = rows.filter((row) => row.title.toLowerCase().includes("лаборатор") || row.kind === "lab");
+  const q = query.toLowerCase().replace(/ё/g, "е").replace(/[«»:.,]/g, " ").replace(/\s+/g, " ").trim();
+  const words = q.split(" ").filter((word) => word.length >= 4);
+  const titleHit = (title: string) => {
+    const folded = title.toLowerCase().replace(/ё/g, "е");
+    return folded.includes(q) || (words.length > 0 && words.every((word) => folded.includes(word)));
+  };
+  if (q === "лаб" || /^лаб\b/.test(q)) rows = rows.filter((row) => row.title.toLowerCase().includes("лаборатор") || row.kind === "lab");
   else if (q) {
-    const names = [...new Set(rows.map((row) => row.discipline))];
-    rows = rows.filter((row) => subjectHit(query, row.discipline, names) || row.title.toLowerCase().includes(q));
+    const ranked = rows
+      .map((row) => ({ row, score: Math.max(rankTitle(query, row.title), titleHit(row.title) ? 80 : 0) }))
+      .filter((item) => item.score >= 70)
+      .sort((a, b) => b.score - a.score);
+    const best = ranked[0]?.score ?? 0;
+    const close = ranked.filter((item) => best - item.score <= 15);
+    rows = close.length ? close.map((item) => item.row) : [];
   }
   const actionable = rows.filter((row) => ["in_review", "submitted", "returned"].includes(row.submission.status));
   const pool = actionable.length ? actionable : rows.filter((row) => row.submission.status !== "graded");
@@ -650,12 +660,12 @@ export async function remindDeadline(user: PublicUser, subject: string) {
       .limit(1);
     if (existing[0]) {
       const clock = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Moscow" }).format(new Date(existing[0].dueAt));
-      return { summary: `Напоминание «${title}» уже стоит на ${formatRuDate(existing[0].dueAt.slice(0, 10))} в ${clock}.`, reminderId: existing[0].id, assignmentId: row.id };
+      return { summary: `Напоминание «${title}» уже стоит на ${formatRuDate(calendarDay(existing[0].dueAt))} в ${clock}.`, reminderId: existing[0].id, assignmentId: row.id };
     }
     const [saved] = await getDb().insert(reminders).values({ userId: user.id, title, dueAt: when.toISOString() }).returning();
     await notify(user.id, "reminder", title, `До срока ${formatRuDate(row.deadline)}.`, `/homework/${row.id}`);
     const clock = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Moscow" }).format(when);
-    return { summary: `Напомню про «${row.title}» (${row.discipline}) ${formatRuDate(when.toISOString().slice(0, 10))} в ${clock}, это до срока ${formatRuDate(row.deadline)}.`, reminderId: saved.id, assignmentId: row.id };
+    return { summary: `Напомню про «${row.title}» (${row.discipline}) ${formatRuDate(calendarDay(when))} в ${clock}, это до срока ${formatRuDate(row.deadline)}.`, reminderId: saved.id, assignmentId: row.id };
   }
   throw notFound("Открытого задания по этому предмету нет");
 }

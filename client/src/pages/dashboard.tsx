@@ -54,7 +54,7 @@ export function DashboardPage() {
       </Glass>
       <Glass>
         <SectionHeader title="Работы к сдаче" action={<Link className="t-chip inline-flex min-h-11 items-center" to="/homework">Все</Link>} />
-        {dueWork.length ? dueWork.map((row) => <WorkItem key={row.id} href={`/homework/${row.id}`} title={row.title} kind="homework" due={row.deadline} status={row.submission.status} />) : <EmptyLine text="Срочных заданий нет" />}
+        {dueWork.length ? <div className="work-stack">{dueWork.map((row) => <WorkItem key={row.id} href={`/homework/${row.id}`} title={row.title} kind="homework" due={row.deadline} status={row.submission.status} />)}</div> : <EmptyLine text="Срочных заданий нет" />}
       </Glass>
       <Glass>
         <SectionHeader title="Новые баллы" count={gradeNotes.length} action={<Link className="t-chip inline-flex min-h-11 items-center" to="/grades">Все</Link>} />
@@ -127,7 +127,7 @@ function LessonLine({ lesson, ask = false }: { lesson: LessonView; ask?: boolean
         state={state}
         note={lesson.changeNote ?? undefined}
         action={ask ? (
-          <button type="button" className="btn btn-quiet h-11 px-3" data-agent-action="schedule-star" aria-pressed={lesson.flagged} onClick={() => void run("mark_schedule_item", { scheduleItemId: lesson.id, flagged: !lesson.flagged })}>
+          <button type="button" className="btn btn-quiet h-11 whitespace-nowrap px-3" data-agent-action="schedule-star" aria-pressed={lesson.flagged} onClick={() => void run("mark_schedule_item", { scheduleItemId: lesson.id, flagged: !lesson.flagged })}>
             {lesson.flagged ? "Пара отмечена" : "Отметить пару"}
           </button>
         ) : null}

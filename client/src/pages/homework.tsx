@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { formatDdMm } from "@shared/dates";
+import { formatDdMm, moscowToday } from "@shared/dates";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../lib/api";
@@ -57,7 +57,7 @@ function groupLabel(work: Work, today: string) {
 export function HomeworkPage() {
   const list = useQuery({ queryKey: ["homework"], queryFn: () => api<{ homework: Work[] }>("/api/homework") });
   const [filter, setFilter] = useState<(typeof FILTERS)[number][0]>("all");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = moscowToday();
   const rows = useMemo(() => {
     const items = list.data?.homework ?? [];
     return items.filter((work) => filter === "all" || bucket(work, today) === filter || (filter === "due" && bucket(work, today) === "overdue"));
@@ -76,13 +76,15 @@ export function HomeworkPage() {
         ))}
       </div>
       {rows.length === 0 ? <EmptyState title="Пусто" text="В этом фильтре заданий нет." /> : groups.map((name) => (
-        <section key={name} className="space-y-2">
+        <section key={name}>
           <SectionHeader title={name} />
-          {rows.filter((work) => groupLabel(work, today) === name).map((work) => (
-            <div key={work.id} data-agent-target={`homework-${work.id}`}>
-              <WorkItem href={`/homework/${work.id}`} title={work.title} kind={work.kindLabel === "Лабораторная" ? "lab" : "homework"} subject={work.discipline} due={work.deadline} status={work.submission.status} points={work.submission.score != null ? { value: work.submission.score, max: work.maxScore || 10 } : undefined} />
-            </div>
-          ))}
+          <div className="work-stack">
+            {rows.filter((work) => groupLabel(work, today) === name).map((work) => (
+              <div key={work.id} data-agent-target={`homework-${work.id}`}>
+                <WorkItem href={`/homework/${work.id}`} title={work.title} kind={work.kindLabel === "Лабораторная" ? "lab" : "homework"} subject={work.discipline} due={work.deadline} status={work.submission.status} points={work.submission.score != null ? { value: work.submission.score, max: work.maxScore || 10 } : undefined} />
+              </div>
+            ))}
+          </div>
         </section>
       ))}
     </div>

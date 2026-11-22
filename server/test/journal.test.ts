@@ -37,7 +37,7 @@ it("миграция 004 переносит оценки и повтор нич�
   const before = await pool.query("select count(*)::int as n from marks");
   const empty = await pool.query("select count(*)::int as n from marks where column_id is null and awarded_on is not null");
   expect(empty.rows[0].n).toBe(0);
-  const control = await pool.query("select work_type, weight::float from journal_columns where title ~* '^контрольн' limit 1");
+  const control = await pool.query("select work_type, weight::float from journal_columns where title ~* '^контрольн' order by id limit 1");
   expect(control.rows[0].work_type).toBe("control");
   expect(Number(control.rows[0].weight)).toBe(2);
   const seminar = await pool.query("select work_type from journal_columns where title ~* '^семинар' limit 1");
@@ -126,7 +126,7 @@ it("журнал закрыт чужим, а оценка без строки д
 
 it("карточка оценки показывает дату и прежнюю оценку", async () => {
   const teacher = await login("orlov.pn", "Altair-teacher-58");
-  const turn = await authedPost(teacher, "/api/agent/turn", { message: "поставь 5 Сорокину за контрольную 20.11 по базам", mode: "fallback" });
+  const turn = await authedPost(teacher, "/api/agent/turn", { message: "поставь 5 Сорокину за контрольную 16.11 по базам", mode: "fallback" });
   expect(turn.statusCode, turn.body).toBe(200);
   const body = turn.json();
   const card = body.confirm ?? body;
@@ -214,8 +214,10 @@ it("уточнение предмета открывает журнал, кол�
   const body = asked.json();
   expect(body.cards?.[0]?.title ?? body.say ?? "").toMatch(/Сорокин/);
   expect(body.ui?.some((item: { to?: string }) => item.to?.includes("/teach/journal"))).toBe(true);
-  const column = await act(teacher, "teacher_add_journal_column", { groupName: "БИ-3-26-04", discipline: "Базы данных", date: addDays(moscowToday(), -3), workType: "essay", title: "Эссе для колонки" });
-  expect(column.statusCode, column.body).toBe(200);
+  const heldDay = await getPool().query("select date::text as date from schedule_items where group_name='БИ-3-26-04' and discipline='Базы данных' and date <= $1::date and change_type = 'none' order by date desc limit 1", [moscowToday()]);
+  await getPool().query("delete from journal_columns where title = 'Эссе для колонки'");
+  const column = await act(teacher, "teacher_add_journal_column", { groupName: "БИ-3-26-04", discipline: "Базы данных", date: heldDay.rows[0].date, workType: "essay", title: "Эссе для колонки" });
+  expect(column.statusCode, `${heldDay.rows[0]?.date} ${column.body}`).toBe(200);
   const only = await act(teacher, "teacher_set_mark", { columnId: column.json().columnId ?? (await getPool().query("select id from journal_columns where title='Эссе для колонки'")).rows[0].id, studentName: "Сорокин", value: 5 });
   expect(only.statusCode, only.body).toBe(200);
   const pool = getPool();
@@ -235,7 +237,7 @@ it("уточнение предмета открывает журнал, кол�
   expect(foreignScheme.statusCode).toBe(404);
   const ownScheme = await act(teacher, "teacher_update_grading", { groupName: "БИ-3-26-04", discipline: "Базы данных", workType: "control", weight: 3, maxPoints: 20, excellent: 99 });
   expect(ownScheme.statusCode, ownScheme.body).toBe(200);
-  const created = await act(teacher, "teacher_add_journal_column", { groupName: "БИ-3-26-04", discipline: "Базы данных", date: addDays(moscowToday(), -2), workType: "control", title: "Контрольная по схеме" });
+  const created = await act(teacher, "teacher_add_journal_column", { groupName: "БИ-3-26-04", discipline: "Базы данных", date: heldDay.rows[0].date, workType: "control", title: "Контрольная по схеме" });
   expect(created.statusCode, created.body).toBe(200);
   const schemeColumn = await getPool().query("select id, max_points, weight::float from journal_columns where title='Контрольная по схеме'");
   expect(schemeColumn.rows[0].max_points).toBe(20);
@@ -258,7 +260,7 @@ it("уточнение предмета открывает журнал, кол�
   expect(kept.rows[0].n).toBeGreaterThan(0);
   const byAlias = parseIntent("сколько баллов по бд", "student", ["Базы данных", "Программирование"]);
   expect(String(byAlias.steps[0]?.args.subject ?? "")).toMatch(/баз/i);
-  const five = await authedPost(teacher, "/api/agent/turn", { message: "поставь 5 Сорокину за контрольную 20.11 по базам", mode: "fallback" });
+  const five = await authedPost(teacher, "/api/agent/turn", { message: "поставь 5 Сорокину за контрольную 16.11 по базам", mode: "fallback" });
   const fiveFields = Object.fromEntries((five.json().confirm?.fields ?? []).map((field: { label: string; value: string }) => [field.label, field.value]));
   expect(fiveFields["Баллы"]).toMatch(/5 из \d+ баллов/);
   if (five.json().confirm?.pendingId) await authedPost(teacher, "/api/agent/reject", { pendingId: five.json().confirm.pendingId });
@@ -271,7 +273,8 @@ async function freeCaseDay(startOffset: number, span: number) {
     const candidate = addDays(moscowToday(), startOffset - step);
     if (candidate < addDays(moscowToday(), -13)) break;
     const taken = await pool.query("select count(*)::int as n from journal_columns where group_name='БИ-3-26-04' and discipline='Базы данных' and lesson_date=$1 and work_type='case'", [candidate]);
-    if (taken.rows[0].n === 0 && new Date(`${candidate}T00:00:00Z`).getUTCDay() !== 0) return candidate;
+    const held = await pool.query("select 1 from schedule_items where group_name='БИ-3-26-04' and discipline='Базы данных' and date=$1 and change_type <> 'cancelled' and not (change_type = 'moved' and coalesce(change_note,'') ilike '%перенесено на%') limit 1", [candidate]);
+    if (taken.rows[0].n === 0 && held.rows.length) return candidate;
   }
   throw new Error("нет свободного дня для кейса");
 }

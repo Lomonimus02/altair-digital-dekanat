@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
 import { analyzeSession } from "../../shared/src/navigator";
 import type { PublicUser } from "../../shared/src/domain";
-import { academicPeriod } from "../../shared/src/dates";
+import { academicPeriod, formatDdMm, weekdayIndex } from "../../shared/src/dates";
 import { ATTENDANCE, DEFAULT_THRESHOLDS, countsAsSemester, defaultWorkRule, formatScore, gradeLabel, legacyFromMark, monthBounds, periodLabel, pointsTotal, semesterBounds, validPoints, WORK_TYPES, WORK_TYPE_KEYS, type AttendanceStatus, type WorkType } from "../../shared/src/journal";
-import { moscowToday } from "../../shared/src/dates";
+import { calendarDay, isFutureDay, moscowToday } from "../../shared/src/dates";
 import { samePerson } from "../../shared/src/names";
 import { getDb } from "./db/client";
 import { attendance, disciplines, gradingSchemes, journalColumns, lessonTopics, marks, scheduleItems, teachingLoad, users } from "./db/schema";
@@ -32,7 +32,7 @@ async function teaches(teacherId: number, groupName: string, discipline: string)
     .from(teachingLoad)
     .where(and(eq(teachingLoad.teacherId, teacherId), eq(teachingLoad.groupName, groupName), eq(teachingLoad.discipline, discipline)))
     .limit(1);
-  if (!rows[0]) throw notFound(MISS);
+  if (!rows[0]) throw notFound("Вы не ведёте этот предмет.");
   return rows[0];
 }
 
@@ -53,7 +53,7 @@ async function studentsOf(groupName: string) {
 async function studentIn(groupName: string, studentName: string) {
   const list = await studentsOf(groupName);
   const found = list.filter((row) => samePerson(studentName, row.fullName));
-  if (found.length !== 1) throw notFound(MISS);
+  if (found.length !== 1) throw notFound(found.length ? "В группе несколько таких студентов." : "Такого студента в этой группе нет.");
   return found[0];
 }
 
@@ -190,14 +190,62 @@ export async function loadJournal(user: PublicUser, groupName: string, disciplin
   };
 }
 
+function lessonHeld(row: { changeType: string; changeNote: string | null }) {
+  if (row.changeType === "cancelled") return false;
+  const note = (row.changeNote ?? "").toLowerCase();
+  return !(row.changeType === "moved" && note.includes("перенесено на"));
+}
+
+function titlesClose(stored: string, asked: string) {
+  const stem = (value: string) => value.toLowerCase().replace(/ё/g, "е").replace(/[^а-яa-z0-9]+/g, " ").trim().split(" ").filter(Boolean).map((word) => word.replace(/(ую|ая|ой|ый|ий|ом|ем|а|я|у|ю|е|ы|и)$/u, ""));
+  const left = stem(stored);
+  const right = stem(asked);
+  if (!left.length || left.length !== right.length) return false;
+  return left.every((word, index) => word === right[index] || word.startsWith(right[index]) || right[index].startsWith(word));
+}
+
+async function lessonsOn(groupName: string, discipline: string, date: string) {
+  return getDb().select().from(scheduleItems).where(and(eq(scheduleItems.groupName, groupName), eq(scheduleItems.discipline, discipline), eq(scheduleItems.date, date)));
+}
+
 async function lessonOn(groupName: string, discipline: string, date: string) {
-  const rows = await getDb().select().from(scheduleItems).where(and(eq(scheduleItems.groupName, groupName), eq(scheduleItems.discipline, discipline), eq(scheduleItems.date, date))).limit(1);
-  return rows[0] ?? null;
+  const rows = await lessonsOn(groupName, discipline, date);
+  return rows.find((row) => lessonHeld(row)) ?? null;
+}
+
+const WEEKDAY_SHORT = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+
+export function lessonChip(date: string) {
+  return `${formatDdMm(date)} (${WEEKDAY_SHORT[weekdayIndex(date)]})`;
+}
+
+export async function nearestHeldLessons(groupName: string, discipline: string, today: string, limit = 3) {
+  const rows = await getDb().select().from(scheduleItems).where(and(
+    eq(scheduleItems.groupName, groupName),
+    eq(scheduleItems.discipline, discipline),
+    lte(scheduleItems.date, today),
+  )).orderBy(asc(scheduleItems.date));
+  const seen = new Set<string>();
+  const held = rows.filter((row) => lessonHeld(row) && !seen.has(row.date) && seen.add(row.date));
+  return held.reverse().slice(0, limit);
+}
+
+export async function heldLessonsBetween(groupName: string, discipline: string, from: string, to: string) {
+  const rows = await getDb().select().from(scheduleItems).where(and(
+    eq(scheduleItems.groupName, groupName),
+    eq(scheduleItems.discipline, discipline),
+    gte(scheduleItems.date, from),
+    lte(scheduleItems.date, to),
+  )).orderBy(asc(scheduleItems.date), asc(scheduleItems.startsAt));
+  const seen = new Set<string>();
+  return rows.filter((row) => lessonHeld(row) && !seen.has(row.date) && seen.add(row.date));
 }
 
 export async function planMark(user: PublicUser, args: Record<string, unknown>) {
   if (user.role !== "teacher") throw forbidden();
   const today = moscowToday();
+  const explicitColumn = Boolean(args.columnId);
+  let namedMatch = false;
   let column = args.columnId ? (await getDb().select().from(journalColumns).where(eq(journalColumns.id, Number(args.columnId))).limit(1))[0] : undefined;
   if (args.columnId && !column) throw notFound(MISS);
   const groupName = column?.groupName ?? String(args.groupName ?? "");
@@ -208,15 +256,33 @@ export async function planMark(user: PublicUser, args: Record<string, unknown>) 
     ? (await getDb().select().from(users).where(eq(users.id, Number(args.studentId))).limit(1))[0]
     : await studentIn(groupName, String(args.studentName ?? ""));
   if (!student || student.role !== "student" || student.groupName !== groupName) throw notFound(MISS);
-  const date = column?.lessonDate ?? String(args.date ?? today);
+  let date = column?.lessonDate ?? (typeof args.date === "string" ? args.date : "");
+  if (!date) {
+    const last = (await nearestHeldLessons(groupName, discipline, today, 1))[0];
+    if (!last) throw badRequest("Прошедшей пары по этому предмету нет");
+    date = last.date;
+  }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw badRequest("Нужна дата");
-  if (date > today) throw badRequest("Дату из будущего ставить нельзя");
   const term = semesterBounds(today);
   if (date < term.from || date > term.to) throw badRequest("Дата вне семестра");
+  if (isFutureDay(date, today)) throw badRequest("Дату из будущего ставить нельзя");
   const workType = (column?.workType ?? args.workType ?? (args.kind === "credit" ? "credit" : "current")) as WorkType;
   if (!WORK_TYPES[workType]) throw badRequest("Неизвестный тип работы");
   let title = String(args.title ?? "");
   if (!title || title === "Текущая") title = WORK_TYPES[workType].label;
+  const requested = String(args.title ?? args.label ?? "");
+  const generic = !requested || requested === WORK_TYPES[workType].label || requested === "Текущая";
+  if (!column && !args.forceNew && !generic) {
+    const named = (await getDb().select().from(journalColumns).where(and(eq(journalColumns.groupName, groupName), eq(journalColumns.discipline, discipline)))).filter((row) => titlesClose(row.title, requested));
+    if (named.length === 1) {
+      column = named[0];
+      namedMatch = true;
+    }
+    else if (named.length > 1) {
+      return { choices: named.map((row) => ({ id: row.id, title: row.title, date: row.lessonDate, fresh: false })) };
+    }
+  }
+  if (column) date = column.lessonDate;
   if (!column && !args.forceNew) {
     const same = await getDb().select().from(journalColumns).where(and(
       eq(journalColumns.groupName, groupName),
@@ -224,13 +290,16 @@ export async function planMark(user: PublicUser, args: Record<string, unknown>) 
       eq(journalColumns.lessonDate, date),
       eq(journalColumns.workType, workType),
     ));
-    const requested = String(args.title ?? args.label ?? "");
-    const generic = !requested || requested === WORK_TYPES[workType].label || requested === "Текущая";
-    const titled = generic ? [] : same.filter((row) => row.title === requested);
-    if (titled.length === 1) column = titled[0];
-    else if (!generic && titled.length === 0 && same.length === 0) {
+    const titled = generic ? [] : same.filter((row) => titlesClose(row.title, requested));
+    if (titled.length === 1) {
+      column = titled[0];
+      namedMatch = true;
+    } else if (!generic && titled.length === 0 && same.length === 0) {
       column = undefined;
-    } else if (generic && same.length === 1) column = same[0];
+    } else if (generic && same.length === 1) {
+      column = same[0];
+      if (args.date && args.workType) namedMatch = true;
+    }
     else if (same.length > 1 || (!generic && same.length >= 1 && titled.length !== 1)) {
       return {
         choices: [
@@ -262,6 +331,10 @@ export async function planMark(user: PublicUser, args: Record<string, unknown>) 
   }
   if (column) title = column.title;
   const lesson = await lessonOn(groupName, discipline, date);
+  if (!lesson && !(explicitColumn || namedMatch)) {
+    const options = await nearestHeldLessons(groupName, discipline, today, 3);
+    return { noLesson: true as const, date, discipline, groupName, options };
+  }
   const existing = column
     ? (await getDb().select().from(marks).where(and(eq(marks.studentId, student.id), eq(marks.columnId, column.id))).limit(1))[0]
     : undefined;
@@ -304,14 +377,33 @@ async function notifyGrade(studentId: number, points: number, maxPoints: number,
   return { id: created.id, previousBody: null as string | null, previousTitle: null as string | null };
 }
 
+function snapshotMark(row: typeof marks.$inferSelect) {
+  return {
+    id: row.id,
+    disciplineId: row.disciplineId,
+    studentId: row.studentId,
+    columnId: row.columnId,
+    points: row.points,
+    value: row.value,
+    teacherId: row.teacherId,
+    updatedAt: row.updatedAt,
+    comment: row.comment,
+    label: row.label,
+    kind: row.kind,
+    awardedOn: row.awardedOn,
+  };
+}
+
 export async function applyMark(user: PublicUser, args: Record<string, unknown>) {
   const plan = await planMark(user, args);
+  if ("noLesson" in plan) throw badRequest("В этот день пары не было");
   if ("choices" in plan) throw badRequest("Несколько колонок. Выберите работу.");
   const db = getDb();
   let column = plan.column;
   let createdColumnId: number | null = null;
   if (!column) {
     const lesson = await lessonOn(plan.groupName, plan.discipline, plan.date);
+    if (!lesson) throw badRequest("В этот день пары не было");
     const rule = (await readScheme(plan.groupName, plan.discipline)).defaults[plan.workType] ?? defaultWorkRule(plan.workType);
     const maxPoints = Number(args.maxPoints ?? args.maxScore ?? rule.maxPoints);
     const weight = args.weight ?? rule.weight;
@@ -330,7 +422,9 @@ export async function applyMark(user: PublicUser, args: Record<string, unknown>)
     column = created;
     createdColumnId = created.id;
   }
+  const hadSubject = (await db.select({ id: disciplines.id }).from(disciplines).where(and(eq(disciplines.studentId, plan.student.id), eq(disciplines.name, plan.discipline))).limit(1))[0];
   const subject = await ensureDiscipline(plan.student.id, plan.discipline, plan.groupName);
+  const createdDisciplineId = hadSubject ? null : subject.id;
   const rawPoints = args.points != null ? Number(args.points) : args.value != null ? Number(args.value) : null;
   const maxPoints = column.maxPoints ?? 10;
   if (rawPoints != null && !validPoints(rawPoints, maxPoints)) throw badRequest(`Баллы от 0 до ${maxPoints} с шагом 0,5`);
@@ -370,9 +464,10 @@ export async function applyMark(user: PublicUser, args: Record<string, unknown>)
       type: "mark_cell" as const,
       markId: markId ?? 0,
       created: !existing,
-      prev: existing ? { value: existing.value, points: existing.points != null ? Number(existing.points) : null, comment: existing.comment, label: existing.label, kind: existing.kind, awardedOn: existing.awardedOn } : null,
+      prev: existing ? snapshotMark(existing) : null,
       notice,
       createdColumnId,
+      createdDisciplineId,
     },
   };
 }
@@ -387,20 +482,7 @@ export async function clearMark(user: PublicUser, markId: number) {
   await getDb().delete(marks).where(eq(marks.id, row.id));
   return {
     summary: "Оценка снята.",
-    undo: {
-      type: "mark_restore" as const,
-      row: {
-        studentId: row.studentId,
-        disciplineId: row.disciplineId,
-        columnId: row.columnId,
-        label: row.label,
-        value: row.value,
-        kind: row.kind,
-        awardedOn: row.awardedOn,
-        comment: row.comment,
-        teacherId: row.teacherId,
-      },
-    },
+    undo: { type: "mark_restore" as const, row: snapshotMark(row) },
   };
 }
 
@@ -413,7 +495,7 @@ export async function addColumn(user: PublicUser, args: Record<string, unknown>)
   const workType = String(args.workType) as WorkType;
   if (!WORK_TYPES[workType]) throw badRequest("Неизвестный тип работы");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw badRequest("Нужна дата");
-  if (date > moscowToday()) throw badRequest("Дату из будущего ставить нельзя");
+  if (isFutureDay(date)) throw badRequest("Дату из будущего ставить нельзя");
   const term = semesterBounds(moscowToday());
   if (date < term.from || date > term.to) throw badRequest("Дата вне семестра");
   const scheme = await readScheme(groupName, discipline);
@@ -428,6 +510,7 @@ export async function addColumn(user: PublicUser, args: Record<string, unknown>)
   )).limit(1))[0];
   if (existing) return { summary: `Колонка «${existing.title}» уже есть.`, columnId: existing.id, undo: null };
   const lesson = await lessonOn(groupName, discipline, date);
+  if (!lesson) throw badRequest("В этот день пары не было");
   const [created] = await getDb().insert(journalColumns).values({
     groupName,
     discipline,
@@ -457,7 +540,7 @@ export async function editColumn(user: PublicUser, args: Record<string, unknown>
   const top = Math.max(0, ...highest.map((row) => (row.points != null ? Number(row.points) : legacyFromMark(row.value, row.kind) ?? 0)));
   if (maxPoints < top) throw badRequest(`Уже стоит ${top} баллов. Максимум нельзя сделать меньше`);
   const nextDate = args.date == null ? column.lessonDate : String(args.date);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate) || nextDate > moscowToday()) throw badRequest("Нужна дата не позже сегодня");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(calendarDay(nextDate)) || isFutureDay(nextDate)) throw badRequest("Нужна дата не позже сегодня");
   const term = semesterBounds(moscowToday());
   if (nextDate < term.from || nextDate > term.to) throw badRequest("Дата вне семестра");
   const next = {
@@ -504,6 +587,8 @@ const STATUS_PRESENT: Record<string, boolean> = { present: true, absent: false, 
 export async function setAttendanceStatus(user: PublicUser, groupName: string, discipline: string, date: string, studentName: string, present: boolean, status?: string) {
   if (user.role !== "teacher") throw forbidden();
   await teaches(user.id, groupName, discipline);
+  if (isFutureDay(date)) throw badRequest("Дату из будущего ставить нельзя");
+  if (!(await lessonOn(groupName, discipline, date))) throw badRequest("В этот день пары не было");
   const student = await studentIn(groupName, studentName);
   const nextStatus = (status ?? (present ? "present" : "absent")) as AttendanceStatus;
   if (!(nextStatus in ATTENDANCE)) throw badRequest("Неизвестный статус явки");

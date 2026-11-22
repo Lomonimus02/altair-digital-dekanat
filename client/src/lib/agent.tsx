@@ -1,6 +1,6 @@
 import { formatDdMm } from "@shared/dates";
 import type { AnswerCard, ChoiceChip, Citation, ConfirmCard, PublicUser, UiDirective } from "@shared/domain";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -8,6 +8,32 @@ import { api, ApiError } from "./api";
 import { playTurn } from "./operator";
 import { applyDirectives } from "./theme";
 import { hasWebGPU, loadModel, proposeLocally, suggestedSize, type ModelSize } from "./webllm";
+
+async function prefetchDestination(queryClient: QueryClient, to: string) {
+  const url = new URL(to, "http://altair.local");
+  const homework = url.pathname.match(/^\/teach\/homework\/(\d+)/);
+  if (homework) {
+    const id = homework[1];
+    await queryClient.prefetchQuery({
+      queryKey: ["teach-assignment", id],
+      queryFn: () => api(`/api/teach/homework/${id}`),
+    });
+    return;
+  }
+  if (url.pathname.endsWith("/teach/homework")) {
+    await queryClient.prefetchQuery({ queryKey: ["teach-queue"], queryFn: () => api("/api/teach/homework") });
+    return;
+  }
+  const group = url.searchParams.get("group") ?? "";
+  const discipline = url.searchParams.get("discipline") ?? "";
+  const from = url.searchParams.get("from") ?? "";
+  const until = url.searchParams.get("to") ?? "";
+  if (!group || !discipline || !from || !until) return;
+  await queryClient.prefetchQuery({
+    queryKey: ["journal", group, discipline, from, until, false],
+    queryFn: () => api(`/api/teach/journal?group=${encodeURIComponent(group)}&discipline=${encodeURIComponent(discipline)}&from=${from}&to=${until}`),
+  });
+}
 
 export interface AgentMessage {
   id: string;
@@ -34,6 +60,8 @@ interface AgentValue {
   setOpen: (value: boolean) => void;
   peek: boolean;
   setPeek: (value: boolean) => void;
+  preferChat: boolean;
+  setPreferChat: (value: boolean) => void;
   peekLine: string;
   ask: (text: string) => void;
   send: (text?: string) => Promise<void>;
@@ -79,6 +107,7 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
   const [busy, setBusy] = useState(false);
   const [open, setOpenState] = useState(false);
   const [peek, setPeek] = useState(false);
+  const [preferChat, setPreferChat] = useState(false);
   const [peekLine, setPeekLine] = useState("");
   const setOpen = (value: boolean) => {
     setOpenState(value);
@@ -90,6 +119,7 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
   const [modelText, setModelText] = useState("");
   const [modelSize, setModelSize] = useState<ModelSize>(suggestedSize());
   const [useServer, setUseServer] = useState(false);
+  const modeChosen = useRef(false);
   const ready = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -104,6 +134,11 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
   useEffect(() => {
     void hasWebGPU().then(setGpu);
   }, []);
+
+  useEffect(() => {
+    if (modeChosen.current) return;
+    if (config.data?.serverModel) setUseServer(true);
+  }, [config.data?.serverModel]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -127,7 +162,6 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
     const message = (text ?? draft).trim();
     if (!message || busy) return;
     setDraft("");
-    setPeek(false);
     setOpen(true);
     const history = messages.slice(-6).map((item) => ({ role: item.role === "user" ? "user" as const : "assistant" as const, content: item.text.slice(0, 500) }));
     setMessages((current) => [...current, { id: rid(), role: "user", text: message }]);
@@ -164,9 +198,10 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
       if (!wide) {
         setPeekLine(first);
         setPeek(true);
-        setOpen(true);
       }
       inputRef.current?.blur();
+      const destination = response.open ?? navigateTo?.to;
+      if (destination) await prefetchDestination(queryClient, destination);
       await playTurn({
         tools,
         open: response.open ?? navigateTo?.to,
@@ -215,6 +250,7 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
       if (!wide) {
         setPeekLine(response.confirm ? "Жду подтверждение…" : say);
         setPeek(false);
+        if (response.confirm) setPreferChat(false);
         setOpen(true);
       }
     } catch (error) {
@@ -228,7 +264,6 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
 
   const clarify = async (choice: ChoiceChip) => {
     if (busy) return;
-    setPeek(false);
     setOpen(true);
     setMessages((current) => [...current, { id: rid(), role: "user", text: choice.label }]);
     setBusy(true);
@@ -283,6 +318,7 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
       if (!wide && response.confirm) {
         setPeekLine("Жду подтверждение…");
         setPeek(false);
+        setPreferChat(false);
         setOpen(true);
       } else if (navigateTo && !wide) {
         setPeekLine(specificPeek(navigateTo.to, response.say));
@@ -304,7 +340,7 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
       const wide = window.matchMedia("(min-width: 768px)").matches;
       setMessages((current) => [
         ...current.map((item) => (item.confirm?.pendingId === pendingId ? { ...item, confirm: undefined } : item)),
-        { id: rid(), role: "agent", text: response.summary, download: response.download, undo: response.undoOffer, cards: response.cards },
+        { id: rid(), role: "agent", text: response.summary, download: response.download, undo: response.undoOffer, cards: response.cards, confirm: response.confirm },
       ]);
       if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches && navigateTo) {
         await new Promise((resolve) => window.setTimeout(resolve, 420));
@@ -315,7 +351,11 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
           action: { label: "Отменить", onClick: () => void undo(response.undoOffer!.auditId) },
         });
       }
-      if (navigateTo && !wide) {
+      if (response.confirm) {
+        setPreferChat(false);
+        setPeek(false);
+        setOpen(true);
+      } else if (navigateTo && !wide) {
         setPeekLine(specificPeek(navigateTo.to, response.summary));
         setPeek(true);
       }
@@ -372,6 +412,8 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
     setOpen,
     peek,
     setPeek,
+    preferChat,
+    setPreferChat,
     peekLine,
     ask: (text: string) => {
       setDraft(text);
@@ -394,7 +436,10 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
     startModel,
     serverModel: Boolean(config.data?.serverModel),
     useServer,
-    setUseServer,
+    setUseServer: (value: boolean) => {
+      modeChosen.current = true;
+      setUseServer(value);
+    },
     inputRef,
     operator,
     canClear,
@@ -477,4 +522,5 @@ interface ActionResult {
   download?: { href: string; label: string };
   undoOffer?: { auditId: number; label: string };
   cards?: AnswerCard[];
+  confirm?: ConfirmCard;
 }

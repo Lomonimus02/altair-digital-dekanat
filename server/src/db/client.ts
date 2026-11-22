@@ -1,4 +1,6 @@
 import pg from "pg";
+
+pg.types.setTypeParser(pg.types.builtins.DATE, (value: string) => value);
 import { drizzle } from "drizzle-orm/node-postgres";
 import { getConfig } from "../config";
 import * as schema from "./schema";

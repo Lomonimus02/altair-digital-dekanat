@@ -38,6 +38,12 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
   const queryClient = useQueryClient();
   const location = useLocation();
   const reduce = useReducedMotion();
+  const [settledPath, setSettledPath] = useState<string | null>(null);
+  useEffect(() => {
+    if (reduce) return;
+    const timer = window.setTimeout(() => setSettledPath(location.pathname), 280);
+    return () => window.clearTimeout(timer);
+  }, [location.pathname, reduce]);
   const wide = useMedia("(min-width: 768px)");
   const xl = useMedia("(min-width: 1280px)");
   const agent = useAgent();
@@ -166,7 +172,7 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
           </div>
         </nav>
         <div className="flex flex-col items-center gap-2 xl:hidden">
-          <button type="button" className="mobile-nav-pill grid h-11 w-11 place-items-center rounded-full" aria-label="Спросить деканат" onClick={() => { agent.setPeek(false); agent.setOpen(true); }}>
+          <button type="button" className="mobile-nav-pill grid h-11 w-11 place-items-center rounded-full" aria-label="Спросить деканат" onClick={() => { agent.setPreferChat(true); agent.setPeek(false); agent.setOpen(true); }}>
             <Sparkles className="h-5 w-5 text-[var(--primary)]" />
           </button>
           <ThemeButton />
@@ -176,7 +182,7 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
         </div>
         <UserChip onLogout={() => void logout()} />
       </aside>
-      <div className="min-w-0 overflow-x-hidden">
+      <div className="min-w-0" style={{ overflowX: "clip" }}>
         <header className="flex items-center justify-between gap-3 px-4 pt-[max(1rem,env(safe-area-inset-top))] md:hidden">
           <Brand compact />
           <div className="flex items-center gap-2">
@@ -196,9 +202,11 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
           <AnimatePresence initial={false}>
             <motion.div
               key={location.pathname}
+              className={reduce || settledPath === location.pathname ? "page-settled" : undefined}
               initial={reduce ? false : location.pathname.split("/").length > 2 ? { opacity: 0, x: 28 } : { opacity: 0 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: reduce ? 0 : 0.22 }}
+              onAnimationComplete={() => setSettledPath(location.pathname)}
             >
               <Outlet />
             </motion.div>
@@ -212,7 +220,7 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
       ) : null}
       {wide && !xl ? <AgentSheet mode="drawer" /> : !wide ? (
         <>
-          {!agent.open || agent.peek ? <MobileNav tabs={tabs} onMore={() => setMore(true)} onAgent={() => { agent.setPeek(false); agent.setOpen(true); }} /> : null}
+          {!agent.open || agent.peek ? <MobileNav tabs={tabs} onMore={() => setMore(true)} onAgent={() => { agent.setPreferChat(true); agent.setPeek(false); agent.setOpen(true); }} /> : null}
           <OperatorChrome />
           <AgentSheet mode="sheet" />
           <MoreSheet open={more} links={moreLinks} onClose={() => setMore(false)} onLogout={() => void logout()} />
@@ -422,7 +430,7 @@ function AskButton() {
   const agent = useAgent();
   if (agent.open && !agent.peek) return null;
   return (
-    <button type="button" className="btn btn-quiet h-11 px-3" onClick={() => { agent.setPeek(false); agent.setOpen(true); }}>
+    <button type="button" className="btn btn-quiet h-11 px-3" onClick={() => { agent.setPreferChat(true); agent.setPeek(false); agent.setOpen(true); }}>
       <Sparkles className="h-4 w-4" /> Спросить
     </button>
   );

@@ -1,4 +1,4 @@
-import { addDays, moscowToday, studyWeek, upcomingWeekday, weekdayIndex } from "./dates";
+import { addDays, mondayOf, moscowToday, studyWeek, upcomingWeekday, weekdayIndex } from "./dates";
 
 const KNOWN_SUBJECTS = [
   "Базы данных",
@@ -65,8 +65,10 @@ export function scheduleAsk(text: string, names: string[] = [], today = moscowTo
     return { when: "date", date };
   }
   const weekday = WEEKDAYS.find(([stem]) => t.includes(stem));
-  if (weekday && /расписан|пар|что у меня|в |на |когда/.test(t)) {
-    return { when: "date", date: upcomingWeekday(today, weekday[1], /следующ/.test(t)) };
+  if (weekday && /расписан|пар|что у меня|в |на |когда|поставь|оцен|балл|явк/.test(t)) {
+    const past = bias === "past" || /прошл/.test(t);
+    const date = past ? lastWeekday(today, weekday[1]) : upcomingWeekday(today, weekday[1], /следующ/.test(t));
+    return { when: "date", date };
   }
   if (/через неделю|следующ[а-я]*\s+недел/.test(t)) return { when: "next_week" };
   if (/прошл[а-я]*\s+недел/.test(t)) return { when: "prev_week" };
@@ -103,25 +105,75 @@ function subjectOf(text: string, names: string[]): string | undefined {
   return pool.find((name) => q.includes(name.toLowerCase()));
 }
 
-function extractDate(text: string, today: string, bias: "upcoming" | "past"): string | null {
-  const named = text.match(/(\d{1,2})\s+(январ\w*|феврал\w*|март\w*|апрел\w*|ма[йя]\w*|июн\w*|июл\w*|август\w*|сентябр\w*|октябр\w*|ноябр\w*|декабр\w*)/);
+const ORDINALS: [string, number][] = [
+  ["тридцать первое", 31], ["тридцатое", 30], ["двадцать девятое", 29], ["двадцать восьмое", 28], ["двадцать седьмое", 27],
+  ["двадцать шестое", 26], ["двадцать пятое", 25], ["двадцать четвертое", 24], ["двадцать третье", 23], ["двадцать второе", 22],
+  ["двадцать первое", 21], ["двадцатое", 20], ["девятнадцатое", 19], ["восемнадцатое", 18], ["семнадцатое", 17], ["шестнадцатое", 16],
+  ["пятнадцатое", 15], ["четырнадцатое", 14], ["тринадцатое", 13], ["двенадцатое", 12], ["одиннадцатое", 11], ["десятое", 10],
+  ["девятое", 9], ["восьмое", 8], ["седьмое", 7], ["шестое", 6], ["пятое", 5], ["четвертое", 4], ["третье", 3], ["второе", 2], ["первое", 1],
+];
+
+function calendarDate(year: number, month: number, day: number): string | null {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month || date.getUTCDate() !== day) return null;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function termBounds(today: string) {
+  const year = Number(today.slice(0, 4));
+  const month = Number(today.slice(5, 7));
+  if (month >= 9) return { from: `${year}-09-01`, to: `${year + 1}-01-31` };
+  if (month === 1) return { from: `${year - 1}-09-01`, to: `${year}-01-31` };
+  return { from: `${year}-02-01`, to: `${year}-08-31` };
+}
+
+export function impossibleDate(text: string): boolean {
+  const t = text.toLowerCase().replace(/ё/g, "е");
+  const named = t.match(/(\d{1,2})\s+(январ\w*|феврал\w*|март\w*|апрел\w*|ма[йя]\w*|июн\w*|июл\w*|август\w*|сентябр\w*|октябр\w*|ноябр\w*|декабр\w*)/);
+  if (!named) return false;
+  const month = MONTHS.find(([stem]) => named[2].startsWith(stem))?.[1];
+  if (!month) return false;
+  return calendarDate(2000, month, Number(named[1])) == null && calendarDate(2004, month, Number(named[1])) == null;
+}
+
+function extractDate(text: string, today: string, _bias: "upcoming" | "past"): string | null {
+  const spoken = ORDINALS.find(([word]) => text.includes(word));
+  const monthWord = text.match(/(январ\w*|феврал\w*|март\w*|апрел\w*|ма[йя]\w*|июн\w*|июл\w*|август\w*|сентябр\w*|октябр\w*|ноябр\w*|декабр\w*)/);
+  if (spoken && monthWord) {
+    const month = MONTHS.find(([stem]) => monthWord[1].startsWith(stem))?.[1];
+    if (month) return withYear(spoken[1], month, today, null);
+  }
+  const named = text.match(/(\d{1,2})\s+(январ[а-яё]*|феврал[а-яё]*|март[а-яё]*|апрел[а-яё]*|ма[йя][а-яё]*|июн[а-яё]*|июл[а-яё]*|август[а-яё]*|сентябр[а-яё]*|октябр[а-яё]*|ноябр[а-яё]*|декабр[а-яё]*)(?:\s+(\d{4}))?/);
   if (named) {
     const month = MONTHS.find(([stem]) => named[2].startsWith(stem))?.[1];
-    if (month) return withYear(Number(named[1]), month, today, null, bias);
+    const year = named[3] ? Number(named[3]) : null;
+    if (month) return withYear(Number(named[1]), month, today, year);
   }
   const numeric = text.match(/(?:^|[^\d])(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?(?!\d)/);
   if (!numeric) return null;
+  if (!numeric[3] && numeric[2].length === 1) return null;
   const year = numeric[3] ? Number(numeric[3].length === 2 ? `20${numeric[3]}` : numeric[3]) : null;
-  return withYear(Number(numeric[1]), Number(numeric[2]), today, year, bias);
+  return withYear(Number(numeric[1]), Number(numeric[2]), today, year);
 }
 
-function withYear(day: number, month: number, today: string, year?: number | null, bias: "upcoming" | "past" = "upcoming"): string | null {
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  const fallback = Number(today.slice(0, 4));
-  let y = year || fallback;
-  const iso = (yearNumber: number) => `${yearNumber}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-  if (!year && bias === "past" && iso(y) > today) y -= 1;
-  else if (!year && bias !== "past" && iso(y) < addDays(today, -14)) y += 1;
-  const date = iso(y);
-  return weekdayIndex(date) >= 0 ? date : null;
+function withYear(day: number, month: number, today: string, year?: number | null): string | null {
+  if (year) return calendarDate(year, month, day);
+  const term = termBounds(today);
+  const base = Number(today.slice(0, 4));
+  for (const candidate of [base, base + 1, base - 1]) {
+    const date = calendarDate(candidate, month, day);
+    if (date && date >= term.from && date <= term.to) return date;
+  }
+  return calendarDate(base, month, day);
+}
+
+function lastWeekday(today: string, weekday: number): string {
+  const delta = (weekdayIndex(today) - weekday + 7) % 7;
+  return addDays(today, -delta);
+}
+
+export function previousStudyWeek(today: string) {
+  const from = mondayOf(addDays(today, -7));
+  return { from, to: addDays(from, 5) };
 }

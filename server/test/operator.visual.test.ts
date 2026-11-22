@@ -11,12 +11,12 @@ it("оператор печатает комментарий в настоящу
   const open = homework.homework.find((row) => ["not_started", "in_progress", "returned"].includes(row.submission.status));
   expect(open?.id).toBeTruthy();
   await page.goto(`http://127.0.0.1:5317/homework/${open!.id}`);
-  await page.locator("textarea").waitFor();
+  await page.locator("textarea[data-agent-field='homework-body']").waitFor();
   await page.evaluate(() => {
     const value = "Готово";
     window.dispatchEvent(new CustomEvent("altair-fill", { detail: { field: "homework-body", value } }));
   });
-  await expect.poll(() => page.locator("textarea").inputValue()).toBe("Готово");
+  await expect.poll(() => page.locator("textarea[data-agent-field='homework-body']").inputValue()).toBe("Готово");
   await page.screenshot({ path: "/opt/cursor/artifacts/mobile-operator-homework-390.png" });
   await browser.close();
 });

@@ -29,9 +29,25 @@ function declineDative(word: string, index: number): string {
   return word;
 }
 
+function nameTokens(value: string) {
+  return norm(value).split(/[^а-яa-z]+/).filter((token) => token.length >= 1);
+}
+
+function tokenFits(token: string, part: string) {
+  if (token.length <= 2) return part.startsWith(token);
+  const left = surnameStem(token);
+  const right = surnameStem(part);
+  if (left && left === right) return true;
+  if (left.length < 3 || right.length < 3) return false;
+  return left.startsWith(right) || right.startsWith(left);
+}
+
+/** Каждое слово запроса должно найтись в имени: фамилия, имя, инициал. */
 export function samePerson(query: string, fullName: string) {
-  const left = surnameStem(query);
-  const right = surnameStem(fullName);
-  if (left.length < 4 || right.length < 4) return false;
-  return left === right || left.startsWith(right) || right.startsWith(left);
+  const queryTokens = nameTokens(query);
+  const name = nameTokens(fullName);
+  const meaningful = queryTokens.filter((token) => token.length >= 3);
+  const parts = meaningful.length ? meaningful : queryTokens.filter((token) => token.length >= 2);
+  if (!parts.length || !name.length) return false;
+  return parts.every((token) => name.some((part) => tokenFits(token, part)));
 }

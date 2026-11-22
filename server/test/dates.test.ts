@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { longDay, nearestStudyDay, resolveWhen, setClock, studyWeek, weekdayIndex } from "../../shared/src/dates";
+import { applyDateInput, longDay, maskRuDate, nearestStudyDay, pasteRuDate, resolveWhen, setClock, studyWeek, weekdayIndex } from "../../shared/src/dates";
 
 afterEach(() => setClock(null));
 
@@ -12,6 +12,31 @@ const week = [
   ["2026-11-14", "суббота", "2026-11-14"],
   ["2026-11-15", "воскресенье", "2026-11-16"],
 ] as const;
+
+it("набор даты не раздувает короткий год и не портит середину", () => {
+  let value = "";
+  let caret = 0;
+  for (const digit of "01112026") {
+    const next = `${value.slice(0, caret)}${digit}${value.slice(caret)}`;
+    const applied = applyDateInput(value, next, caret + 1);
+    value = applied.value;
+    caret = applied.caret;
+  }
+  expect(value).toBe("01.11.2026");
+  expect(caret).toBe(value.length);
+  expect(applyDateInput("01.11.202", "01.11.20", 8).value).toBe("01.11.20");
+  expect(applyDateInput("01.11.20", "01.11.202", 9).value).toBe("01.11.202");
+  expect(applyDateInput("01.11.2026", "0111.2026", 2)).toEqual({ value: "01.12.026", caret: 1 });
+  expect(applyDateInput("01.", "01", 2)).toEqual({ value: "0", caret: 1 });
+  expect(applyDateInput("01.11", "01.1", 4).value).toBe("01.1");
+  expect(applyDateInput("01.11.2026", "01.151.2026", 5)).toEqual({ value: "01.15.2026", caret: "01.15".length });
+  expect(pasteRuDate("2026-11-01")).toBe("01.11.2026");
+  expect(pasteRuDate("01/11/26")).toBe("01.11.2026");
+  expect(pasteRuDate("1.1.2026")).toBe("01.01.2026");
+  expect(pasteRuDate("01112026")).toBe("01.11.2026");
+  expect(maskRuDate("01.11.20")).toBe("01.11.20");
+  expect(maskRuDate("2026-11-01")).toBe("20.26.1101");
+});
 
 it("ближайший учебный день для каждого дня недели", () => {
   expect(weekdayIndex("2026-11-15")).toBe(0);

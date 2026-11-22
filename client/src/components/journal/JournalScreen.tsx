@@ -7,6 +7,8 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import { useAction } from "../../lib/action";
 import { BackLink, Button, Choice, EmptyState, ErrorState, LoadingBlock } from "../ui";
+import { scrollCellIntoView } from "../../lib/operator";
+import { RuDateField } from "./RuDateField";
 
 interface Column { id: number; date: string; workType: string; short: string; title: string; maxScore: number; maxPoints?: number; weight: number; scheduleItemId: number | null; position?: number; virtual?: boolean; ghostKey?: boolean }
 interface Student { id: number; name: string; short: string; automatic: string | null; finalText: string | null; marks: { label: string; value: number | null }[]; attendance: { date: string; present: boolean }[] }
@@ -84,8 +86,24 @@ export function JournalScreen({ readOnly = false, endpoint = "/api/teach/journal
     if (!params.get("group") && group) set({ group, discipline, from, to });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [group, discipline]);
-  if (!readOnly && home.isLoading) return <LoadingBlock />;
-  if (journal.isLoading) return <LoadingBlock />;
+  useEffect(() => {
+    if (!journal.data) return;
+    window.dispatchEvent(new CustomEvent("altair-page-ready", { detail: { page: "journal" } }));
+  }, [journal.data]);
+  if (!readOnly && home.isLoading && !group) return <LoadingBlock />;
+  if (journal.isLoading) {
+    return (
+      <div className="space-y-4" data-agent-target="journal">
+        <h1>Журнал</h1>
+        <div className="grid grid-cols-4 gap-1 rounded-full bg-black/5 p-1 dark:bg-white/10" aria-hidden>
+          {["Неделя", "Месяц", "Семестр", "Даты"].map((label) => <div key={label} className="h-11 rounded-full" />)}
+        </div>
+        <div className="space-y-2" aria-busy="true" aria-label="Журнал загружается">
+          {Array.from({ length: 6 }, (_, index) => <div key={index} className="skeleton h-11 w-full rounded-2xl" />)}
+        </div>
+      </div>
+    );
+  }
   if (journal.error || !journal.data) return <ErrorState text="Журнал недоступен" onRetry={() => void journal.refetch()} />;
   const data = journal.data;
   return (
@@ -200,8 +218,8 @@ function PeriodBar({ from, to, onChange }: { from: string; to: string; onChange:
           <form role="dialog" aria-label="Свои даты" className="w-full max-w-md rounded-t-3xl bg-[var(--surface-solid)] p-4" style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }} onClick={(event) => event.stopPropagation()} onSubmit={apply}>
             <p className="font-semibold">Свои даты</p>
             <div className="mt-3 grid grid-cols-2 gap-3">
-              <label className="text-sm font-semibold">С<input className="field mt-1" lang="ru" inputMode="numeric" placeholder="дд.мм.гггг" aria-label="С" value={start} onChange={(event) => { setStart(event.target.value); setError(""); }} /></label>
-              <label className="text-sm font-semibold">По<input className="field mt-1" lang="ru" inputMode="numeric" placeholder="дд.мм.гггг" aria-label="По" value={end} onChange={(event) => { setEnd(event.target.value); setError(""); }} /></label>
+              <RuDateField label="С" value={start} onChange={(next) => { setStart(next); setError(""); }} />
+              <RuDateField label="По" value={end} onChange={(next) => { setEnd(next); setError(""); }} />
             </div>
             {error ? <p className="mt-2 text-sm text-rose-700" role="alert">{error}</p> : null}
             <div className="mt-3 flex gap-2">
@@ -249,7 +267,7 @@ function AddColumn({ group, discipline, scheme, onDone }: { group: string; disci
   const form = (
     <form className="space-y-3" onSubmit={submit}>
       <p className="font-semibold">Новая работа</p>
-      <label className="block text-sm font-semibold">Дата<input className="field mt-1" lang="ru" inputMode="numeric" placeholder="дд.мм.гггг" aria-label="Дата работы" value={date} onChange={(event) => { setDate(event.target.value); setError(""); }} required /></label>
+      <RuDateField block label="Дата работы" caption="Дата" value={date} required onChange={(next) => { setDate(next); setError(""); }} />
       <label className="block text-sm font-semibold">Тип<select className="field mt-1 h-11" value={workType} onChange={(event) => pickType(event.target.value as WorkType)}>{Object.entries(WORK_TYPES).map(([key, item]) => <option key={key} value={key}>{item.label}</option>)}</select></label>
       <label className="block text-sm font-semibold">Название<input className="field mt-1" value={title} onChange={(event) => setTitle(event.target.value)} aria-label="Название" /></label>
       <div className="grid grid-cols-2 gap-3">
@@ -301,9 +319,11 @@ function Grid({ data, focus, studentFocus, readOnly, onDone }: { data: Payload; 
   const columns = viewColumns(data, focus);
   const today = moscowToday();
   useEffect(() => {
+    if (document.body.dataset.operator === "1") return;
     const selector = studentFocus && focus ? `[data-agent-cell="${studentFocus}:${focus}"]` : "";
     const node = selector ? document.querySelector(selector) : null;
-    if (node instanceof HTMLElement) node.scrollIntoView({ inline: "center", block: "nearest" });
+    const grid = node?.closest("[data-scroll-x]");
+    if (node instanceof HTMLElement && grid instanceof HTMLElement) scrollCellIntoView(node, grid);
   }, [focus, studentFocus, columns.length]);
   useEffect(() => {
     const open = (event: Event) => setCell((event as CustomEvent<{ id: string }>).detail.id);
@@ -337,11 +357,12 @@ function Grid({ data, focus, studentFocus, readOnly, onDone }: { data: Payload; 
                 const max = column.maxPoints ?? column.maxScore ?? 10;
                 return <td key={id} className="px-1 py-1"><button type="button" data-agent-action="journal-cell" data-agent-cell={id} className={`grid h-11 min-w-11 place-items-center rounded-xl text-sm font-semibold ${gradeTone(found?.value ?? null, max)} ${column.virtual ? "border border-dashed" : ""}`} aria-label={`${student.short}, ${column.date.slice(8, 10)}.${column.date.slice(5, 7)} ${column.title}: ${found?.value ?? "пусто"}`} onClick={() => setCell(id)}>{found?.value ?? ""}{visit && visit.status !== "present" ? <sup className="text-[10px]">{visit.status === "absent" ? "Н" : visit.status === "sick" ? "Б" : visit.status === "late" ? "О" : "У"}</sup> : null}</button></td>;
               })}
-              <td className="sticky right-0 bg-[var(--surface-solid)] px-2 text-center" data-ui="grade" title="Итог за семестр"><span data-ui-part="value" className="t-value inline-grid h-11 min-w-11 place-items-center rounded-2xl px-1" style={{ background: "var(--g-4)" }}>{data.averages[student.id]?.percent == null ? "—" : formatPercent(data.averages[student.id]?.percent ?? null)}</span></td>
+              <td className="sticky right-0 bg-[var(--surface-solid)] px-2 text-center" data-ui="grade" title="Итог за семестр"><span data-ui-part="value" className="t-value inline-grid h-11 min-w-11 place-items-center rounded-2xl px-1" style={{ background: "var(--g-4)", color: "var(--g-4-fg)" }}>{data.averages[student.id]?.percent == null ? "—" : formatPercent(data.averages[student.id]?.percent ?? null)}</span></td>
             </tr>
           ))}
         </tbody>
       </table>
+      <div aria-hidden className="w-full shrink-0" style={{ height: "var(--agent-sheet-h, 0px)" }} />
       {cell ? <CellDialog id={cell} data={data} readOnly={readOnly} onClose={() => setCell(null)} onDone={onDone} /> : null}
     </div>
   );
@@ -429,11 +450,11 @@ function CellDialog({ id, data, readOnly, onClose, onDone }: { id: string; data:
     }
   };
   return (
-    <div className="fixed inset-x-0 z-[60] mx-auto max-w-lg rounded-t-3xl bg-[var(--surface-solid)] p-4 shadow-2xl md:absolute md:inset-auto md:rounded-3xl" style={{ bottom: "calc(7.75rem + env(safe-area-inset-bottom))" }} role="dialog" aria-label="Оценка">
+    <div className="fixed inset-x-0 z-[60] mx-auto max-w-lg rounded-t-3xl bg-[var(--surface-solid)] p-4 shadow-2xl md:absolute md:inset-auto md:rounded-3xl" style={{ bottom: "calc(var(--agent-sheet-h, 0px) + 12px)" }} role="dialog" aria-label="Оценка">
       <p className="font-semibold">{student.name} · {(column?.date ?? lessonDate) ? journalDateLabel(column?.date ?? lessonDate!) : "новая"} · {column?.short ?? WORK_TYPES[workType as WorkType]?.short ?? "Работа"} /{max} · ×{weight}</p>
       <p className="text-sm text-[var(--muted)]">{column?.title ?? WORK_TYPES[workType as WorkType]?.label ?? "Работа"}</p>
       {readOnly ? <p className="mt-3 text-2xl font-semibold">{found?.value == null ? "—" : `${found.value}/${max}`}</p> : <PointsEntry max={max} value={value} onChange={(next) => { setValue(next); setError(""); }} />}
-      <input className="sr-only" data-agent-field="journal-value" value={value} tabIndex={-1} aria-hidden="true" onChange={(event) => setValue(event.target.value)} />
+      <span className="sr-only" aria-hidden="true">{value}</span>
       {error ? <p className="mt-2 text-sm text-rose-700" role="alert">{error}</p> : null}
       {readOnly ? null : <label className="mt-3 block text-sm font-semibold">Комментарий<textarea className="field mt-1 min-h-16 py-3" data-agent-field="journal-comment" value={comment} maxLength={500} onChange={(event) => setComment(event.target.value)} /></label>}
       <div className="mt-3 flex flex-wrap gap-2">
@@ -531,7 +552,7 @@ function PointsEntry({ max, value, onChange }: { max: number; value: string; onC
       </div>
       <div className="flex items-center gap-2">
         <button type="button" className="btn btn-quiet h-11 w-11 px-0" aria-label="Меньше" onClick={() => set((Number(value) || 0) - 0.5)}>−</button>
-        <input className="field h-11 w-24 text-center" inputMode="decimal" step={0.5} min={0} max={max} aria-label="Баллы" value={value} onChange={(event) => onChange(event.target.value)} />
+        <input className="field h-11 w-24 text-center" inputMode="decimal" step={0.5} min={0} max={max} aria-label="Баллы" data-agent-field="journal-value" value={value} onChange={(event) => onChange(event.target.value)} />
         <button type="button" className="btn btn-quiet h-11 w-11 px-0" aria-label="Больше" onClick={() => set((Number(value) || 0) + 0.5)}>+</button>
         <span className="text-sm text-[var(--muted)]">из {max}</span>
       </div>

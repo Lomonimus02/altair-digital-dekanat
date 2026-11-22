@@ -1,3 +1,4 @@
+import { moscowToday } from "@shared/dates";
 import { CHIP_LABELS } from "@shared/journal";
 
 const MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
@@ -8,7 +9,7 @@ function parts(iso: string) {
   return { y, m, d, wd: new Date(Date.UTC(y, m - 1, d)).getUTCDay() };
 }
 
-export function fmtDate(iso: string, mode: "short" | "day" | "full" | "rel" = "short", today = new Date().toISOString().slice(0, 10)) {
+export function fmtDate(iso: string, mode: "short" | "day" | "full" | "rel" = "short", today = moscowToday()) {
   const day = iso.slice(0, 10);
   const { d, m, wd } = parts(day);
   const short = `${d} ${MONTHS[m - 1]}`;
@@ -28,7 +29,7 @@ export function fmtDate(iso: string, mode: "short" | "day" | "full" | "rel" = "s
   return withDay;
 }
 
-export function fmtTimeAgo(iso: string, today = new Date().toISOString().slice(0, 10)) {
+export function fmtTimeAgo(iso: string, today = moscowToday()) {
   const day = iso.slice(0, 10);
   const clock = iso.length > 10 ? iso.slice(11, 16) : "";
   if (day === today && clock) return clock;
@@ -52,7 +53,7 @@ export function nb(value: string) {
     .replace(/([А-ЯЁ]\.)\s+/g, "$1\u00A0");
 }
 
-export function urgency(due: string, today = new Date().toISOString().slice(0, 10)): "over" | "soon" | "later" {
+export function urgency(due: string, today = moscowToday()): "over" | "soon" | "later" {
   if (due < today) return "over";
   const limit = shift(today, 3);
   if (due <= limit) return "soon";

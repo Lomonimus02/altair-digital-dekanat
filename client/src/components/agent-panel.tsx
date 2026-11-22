@@ -13,7 +13,7 @@ const LAW_HOMEWORK_HINTS = ["Что просрочено?", "Что сдать �
 const STAFF_HINTS = ["Разбери входящие", "Статус заявки на справку", "Опубликуй объявление: Приём справок сегодня до 17:00", "Какие заявки ждут меня"];
 const TEACHER_HINTS = ["Покажи непроверенные работы", "Что у меня сегодня?", "Отметь отсутствующих", "Поставь 5 Сорокину за лабу", "Выдай задание по базам данных на пятницу", "Верни работу Сорокина на доработку"];
 
-export function AgentPanel({ variant = "dock", chrome = true }: { variant?: "dock" | "sheet"; chrome?: boolean }) {
+export function AgentPanel({ variant = "dock", chrome = true, onlyConfirm = false }: { variant?: "dock" | "sheet"; chrome?: boolean; onlyConfirm?: boolean }) {
   const agent = useAgent();
   const { user } = useAuth();
   const location = useLocation();
@@ -46,7 +46,7 @@ export function AgentPanel({ variant = "dock", chrome = true }: { variant?: "doc
   const speech = typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col">
+    <div className={onlyConfirm ? "flex flex-col" : "flex h-full min-h-0 flex-1 flex-col"}>
       {chrome ? (
         <header className="flex items-center justify-between gap-3 px-4 pb-2 pt-3">
           <div className="min-w-0">
@@ -60,7 +60,7 @@ export function AgentPanel({ variant = "dock", chrome = true }: { variant?: "doc
           </button>
         </header>
       ) : null}
-      <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 pb-3" aria-live="polite">
+      <div ref={listRef} className={`space-y-3 px-4 pb-3 ${onlyConfirm ? "overflow-visible" : "min-h-0 flex-1 overflow-y-auto overscroll-contain"}`} aria-live="polite">
         {agent.messages.length === 0 ? (
           <div className="space-y-3 pt-2">
             <p className="text-sm font-semibold">Что я умею</p>
@@ -78,12 +78,29 @@ export function AgentPanel({ variant = "dock", chrome = true }: { variant?: "doc
             </div>
           </div>
         ) : null}
-        {agent.messages.map((message) => (
+        {(onlyConfirm ? agent.messages.filter((message) => message.confirm).slice(-1) : agent.messages).map((message) => onlyConfirm && message.confirm ? (
+          <div key={message.id} className="px-4 pb-3 pt-3">
+            <p className="pr-10 font-semibold">{message.confirm.title}</p>
+            <p className="mt-1 text-xs text-[var(--muted)]">{message.confirm.summary}</p>
+            <dl className="mt-2 space-y-0.5">
+              {message.confirm.fields.map((field) => (
+                <div key={field.label} className="flex items-baseline justify-between gap-3">
+                  <dt className="text-[11px] uppercase text-[var(--muted)]">{field.label}</dt>
+                  <dd className="text-right">{field.value}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className="mt-3 flex gap-2">
+              <Button onClick={() => void agent.confirm(message.confirm!.pendingId)} disabled={agent.busy}>Подтвердить</Button>
+              <Button variant="glass" onClick={() => void agent.reject(message.confirm!.pendingId)}>Не сейчас</Button>
+            </div>
+          </div>
+        ) : (
           <article key={message.id} className={message.role === "user" ? "ml-8" : "mr-2"}>
             <div className={`rounded-3xl px-3.5 py-3 text-sm leading-relaxed ${message.role === "user" ? "bg-[var(--primary)] text-[var(--primary-ink)]" : "liquid-glass"}`}>
               <div className={message.role === "user" ? "" : "glass-pad"}>
                 {message.caption && message.role === "agent" ? <p className="mb-1 text-[11px] uppercase tracking-wide text-[var(--muted)]">{message.caption}</p> : null}
-                {message.steps?.length ? (
+                {message.steps?.length && !onlyConfirm ? (
                   <ol className="mb-2 space-y-1">
                     {message.steps.map((step, index) => (
                       <li key={index} className={step.status === "error" ? "text-[var(--risk-high-fg)]" : "text-[var(--muted)]"}>
@@ -105,7 +122,7 @@ export function AgentPanel({ variant = "dock", chrome = true }: { variant?: "doc
                     </dl>
                   </div>
                 ))}
-                <p className="whitespace-pre-wrap">{message.text}</p>
+                {onlyConfirm ? null : <p className="whitespace-pre-wrap">{message.text}</p>}
                 {message.citations?.map((citation) => (
                   <blockquote key={citation.slug} className="mt-2 border-l-2 border-[var(--brand)] pl-2 text-xs text-[var(--muted)]">
                     <span className="font-semibold text-[var(--ink)]">{citation.title}. </span>
@@ -160,7 +177,7 @@ export function AgentPanel({ variant = "dock", chrome = true }: { variant?: "doc
         ))}
         {agent.busy ? <p className="text-sm text-[var(--muted)]">Думаю…</p> : null}
       </div>
-      <form
+      {onlyConfirm ? null : <form
         className="agent-form px-3"
         onSubmit={(event) => {
           event.preventDefault();
@@ -205,7 +222,7 @@ export function AgentPanel({ variant = "dock", chrome = true }: { variant?: "doc
             <Send className="h-4 w-4" />
           </button>
         </div>
-      </form>
+      </form>}
     </div>
   );
 }

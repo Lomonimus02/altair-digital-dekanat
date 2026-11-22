@@ -73,6 +73,7 @@ export const PAGES = [
   "teach_queue",
   "teach_issue",
   "teach_announce",
+  "staff_journal",
 ] as const;
 
 export type AppPage = (typeof PAGES)[number];
@@ -227,8 +228,8 @@ export type UndoPayload =
   | { type: "reminder"; id: number }
   | { type: "flag"; scheduleItemId: number; flagged: boolean }
   | { type: "mark"; markId: number }
-  | { type: "mark_cell"; markId: number; created: boolean; prev: { value: number | null; points?: number | null; comment: string | null; label: string; kind: string; awardedOn: string | null } | null; createdColumnId?: number | null; notice?: { id: number; previousBody: string | null; previousTitle?: string | null } | null }
-  | { type: "mark_restore"; row: { studentId: number; disciplineId: number; columnId: number | null; label: string; value: number | null; kind: string; awardedOn: string | null; comment: string | null; teacherId: number | null } }
+  | { type: "mark_cell"; markId: number; created: boolean; prev: { id?: number; disciplineId?: number; studentId?: number; columnId?: number | null; value: number | null; points?: number | string | null; comment: string | null; label: string; kind: string; awardedOn: string | null; teacherId?: number | null; updatedAt?: string | null } | null; createdColumnId?: number | null; createdDisciplineId?: number | null; notice?: { id: number; previousBody: string | null; previousTitle?: string | null } | null }
+  | { type: "mark_restore"; row: { id?: number; studentId: number; disciplineId: number; columnId: number | null; label: string; value: number | null; points?: number | string | null; kind: string; awardedOn: string | null; comment: string | null; teacherId: number | null; updatedAt?: string | null } }
   | { type: "journal_column"; column: Record<string, unknown>; marks: Record<string, unknown>[] }
   | { type: "topic"; groupName: string; discipline: string; date: string; topic: string | null }
   | { type: "attendance"; studentId: number; groupName: string; discipline: string; date: string; present: boolean | null; status: string | null }

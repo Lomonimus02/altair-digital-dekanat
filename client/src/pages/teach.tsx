@@ -78,7 +78,12 @@ interface QueueItem {
 
 export function TeachQueue() {
   const queue = useQuery({ queryKey: ["teach-queue"], queryFn: () => api<{ queue: QueueItem[] }>("/api/teach/homework") });
-  if (queue.isLoading) return <LoadingBlock />;
+  if (queue.isLoading) return (
+    <div className="space-y-3" aria-busy="true">
+      <h1 className="t-page">Проверка</h1>
+      {Array.from({ length: 4 }, (_, index) => <div key={index} className="skeleton h-16 w-full rounded-3xl" />)}
+    </div>
+  );
   if (queue.error) return <ErrorState text="Очередь не загрузилась" onRetry={() => void queue.refetch()} />;
   const rows = queue.data?.queue ?? [];
   return (
@@ -109,7 +114,13 @@ export function TeachAssignment() {
     queryFn: () => api<{ assignment: { id: number; title: string; description: string; groupName: string; discipline: string; kind: string; maxPoints?: number; students: { name: string; submission: { statusLabel: string; body: string; status: string; score: number | null; teacherComment: string | null } }[] } }>(`/api/teach/homework/${id}`),
   });
   const [error, setError] = useState("");
-  if (detail.isLoading) return <LoadingBlock />;
+  if (detail.isLoading) return (
+    <div className="space-y-4" aria-busy="true">
+      <h1 className="t-page">Работа</h1>
+      <div className="skeleton h-24 w-full rounded-3xl" />
+      <div className="skeleton h-40 w-full rounded-3xl" />
+    </div>
+  );
   if (detail.error || !detail.data) return <ErrorState text="Задание не найдено" />;
   const assignment = detail.data.assignment;
   return (
@@ -194,7 +205,7 @@ function StudentReview({
         <div className="mt-3 space-y-2">
           <div className="flex flex-nowrap items-center gap-2">
             <button type="button" className="btn btn-quiet h-11 w-11 shrink-0 px-0" aria-label="Меньше" onClick={() => step(-0.5)}>−</button>
-            <input className="field h-11 shrink-0 px-2 text-center" style={{ width: 72, flex: "0 0 72px" }} inputMode="decimal" aria-label="Баллы" placeholder="—" value={draft} onChange={(event) => setDraft(event.target.value)} />
+            <input className="field h-11 shrink-0 px-2 text-center" style={{ width: 72, flex: "0 0 72px" }} inputMode="decimal" aria-label="Баллы" data-agent-field="homework-score" placeholder="—" value={draft} onChange={(event) => setDraft(event.target.value)} />
             <span className="t-meta whitespace-nowrap">из {maxPoints}</span>
             <button type="button" className="btn btn-quiet h-11 w-11 shrink-0 px-0" aria-label="Больше" onClick={() => step(0.5)}>+</button>
           </div>

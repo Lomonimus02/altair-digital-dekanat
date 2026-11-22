@@ -145,7 +145,7 @@ export async function buildApp() {
       return reply.code(400).send({
         error: "bad_request",
         message: "Проверьте поля",
-        issues: error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
+        issues: error.issues.map((issue) => ({ path: issue.path.join("."), message: /[A-Za-z]{4,}/.test(issue.message) ? "Проверьте поля" : issue.message })),
       });
     }
     app.log.error(error);

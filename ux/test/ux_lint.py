@@ -81,6 +81,25 @@ CHROME = r"""
 }
 """
 
+ITEM_OVERLAP = r"""
+() => {
+  const vis = (el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 1 && r.height > 1 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const out = [];
+  for (const card of document.querySelectorAll('[data-ui]')) {
+    const boxes = [...card.querySelectorAll('[data-ui-part="title"], button')].filter((el) => vis(el));
+    for (let i = 0; i < boxes.length; i += 1) for (let j = i + 1; j < boxes.length; j += 1) {
+      if (boxes[i].contains(boxes[j]) || boxes[j].contains(boxes[i])) continue;
+      const a = boxes[i].getBoundingClientRect();
+      const b = boxes[j].getBoundingClientRect();
+      const overlap = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+      const stack = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+      if (overlap > 2 && stack > 2) out.push('item-overlap:' + Math.round(overlap) + 'x' + Math.round(stack));
+    }
+  }
+  return out;
+}
+"""
+
 def chrome(pg, label):
     for item in pg.evaluate(CHROME):
         fails.append((label, item))
@@ -89,7 +108,7 @@ fails = []; report = {}
 with sync_playwright() as p:
     br = p.chromium.launch(channel="chrome", args=["--no-sandbox", "--disable-dev-shm-usage"])
     for role, pages in PAGES.items():
-        for w in (360, 390):
+        for w in (360, 390, 412):
             ctx = br.new_context(viewport={"width": w, "height": 800}, is_mobile=True, has_touch=True, device_scale_factor=2, locale="ru-RU", timezone_id="Europe/Moscow")
             assert ctx.request.post(B + "/api/auth/login", data={"login": ACC[role][0], "password": ACC[role][1]}, headers={"Origin": B}).ok
             ctx.route("**/api/**", lambda r: r.abort() if r.request.method not in ("GET", "HEAD", "OPTIONS") and "/api/auth/" not in r.request.url else r.continue_())
@@ -99,6 +118,8 @@ with sync_playwright() as p:
                 res = pg.evaluate(CHECK, a.legacy)
                 key = f"{role} {w} {u.split('?')[0] if 'journal' in u else u}"
                 report[key] = res
+                if w == 412:
+                    for item in pg.evaluate(ITEM_OVERLAP): fails.append((key, item))
                 if not a.legacy and res["items"] == 0 and u not in ("/profile",): fails.append((key, "no [data-ui] items rendered — page not migrated to shared item components"))
                 for o in res["out"]: fails.append((key, f"{o['part']}: {o['v']} «{o['text']}»"))
                 if "journal" in u or u.startswith("/grades") or u.startswith("/notifications"):
