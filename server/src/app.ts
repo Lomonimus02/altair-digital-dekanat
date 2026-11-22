@@ -12,7 +12,7 @@ import { CONTEST_NOTE, kindMeta, UNIVERSITY, type PublicUser } from "../../share
 import { marksForTerm, semesterBounds } from "../../shared/src/journal";
 import { analyzeSession } from "../../shared/src/navigator";
 import { hashPassword, randomToken, sessionHash, verifyPassword } from "./auth/crypto";
-import { clarifyChoice, confirmPending, perform, rejectPending, runTurn, studentBrief } from "./actions";
+import { cardStatus, clarifyChoice, confirmPending, perform, rejectPending, runTurn, studentBrief } from "./actions";
 import { getConfig } from "./config";
 import { REGULATION_DOCS, searchRegulations } from "./content/regulations";
 import { getDb, getPool } from "./db/client";
@@ -34,7 +34,7 @@ import {
   toPublic,
 } from "./loaders";
 import { renderCertificate } from "./pdf";
-import { getStudentHomework, getTeacherAssignment, listStudentHomework, teacherHome, teacherQueue } from "./homework";
+import { getStudentHomework, getTeacherAssignment, listStudentHomework, teacherAssignments, teacherHome, teacherReview } from "./homework";
 import { loadJournal, studentTable } from "./journal";
 import { triageRequest } from "./triage";
 import type { RequestStatus } from "../../shared/src/domain";
@@ -365,6 +365,7 @@ export async function buildApp() {
           mode: z.enum(["auto", "device", "server", "fallback", "cloud"]).optional(),
           proposal: z.unknown().optional(),
           history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(500) })).max(6).optional(),
+          context: z.string().max(400).optional(),
         })
         .parse(request.body);
       return runTurn(request.user!, body);
@@ -378,6 +379,11 @@ export async function buildApp() {
     scope.post("/api/agent/confirm", async (request) => {
       const body = z.object({ pendingId: z.string().uuid() }).parse(request.body);
       return confirmPending(request.user!, body.pendingId);
+    });
+
+    scope.post("/api/agent/status", async (request) => {
+      const body = z.object({ pendingIds: z.array(z.string().uuid()).max(40).default([]), auditIds: z.array(z.number().int().positive()).max(40).default([]) }).parse(request.body);
+      return cardStatus(request.user!, body.pendingIds, body.auditIds);
     });
 
     scope.post("/api/agent/reject", async (request) => {
@@ -405,7 +411,8 @@ export async function buildApp() {
       return { homework, reminder: reminder ? { title: reminder.title, dueAt: reminder.dueAt } : null };
     });
     scope.get("/api/teach/home", async (request) => teacherHome(request.user!));
-    scope.get("/api/teach/homework", async (request) => ({ queue: await teacherQueue(request.user!) }));
+    scope.get("/api/teach/homework", async (request) => teacherReview(request.user!));
+    scope.get("/api/teach/assignments", async (request) => ({ assignments: await teacherAssignments(request.user!) }));
     scope.get("/api/teach/homework/:id", async (request) => ({ assignment: await getTeacherAssignment(request.user!, Number((request.params as { id: string }).id)) }));
     scope.get("/api/teach/journal", async (request) => {
       if (request.user!.role !== "teacher") throw new HttpError(403, "forbidden", "Недостаточно прав");

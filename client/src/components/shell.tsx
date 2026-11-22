@@ -70,42 +70,6 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
     return () => source.close();
   }, [queryClient]);
 
-  const [pull, setPull] = useState(0);
-  const [refreshed, setRefreshed] = useState(false);
-  useEffect(() => {
-    let startY = 0;
-    let pulling = false;
-    const onStart = (event: TouchEvent) => {
-      if (window.scrollY > 4) return;
-      if (event.target instanceof Element && event.target.closest("[data-scroll-x]")) return;
-      startY = event.touches[0]?.clientY ?? 0;
-      pulling = true;
-    };
-    const onMove = (event: TouchEvent) => {
-      if (!pulling) return;
-      const next = Math.max(0, Math.min(96, (event.touches[0]?.clientY ?? startY) - startY));
-      setPull(next);
-    };
-    const onEnd = () => {
-      if (!pulling) return;
-      pulling = false;
-      setPull((current) => {
-        if (current > 72) {
-          setRefreshed(true);
-          void queryClient.invalidateQueries().finally(() => window.setTimeout(() => setRefreshed(false), 700));
-        }
-        return 0;
-      });
-    };
-    window.addEventListener("touchstart", onStart, { passive: true });
-    window.addEventListener("touchmove", onMove, { passive: true });
-    window.addEventListener("touchend", onEnd);
-    return () => {
-      window.removeEventListener("touchstart", onStart);
-      window.removeEventListener("touchmove", onMove);
-      window.removeEventListener("touchend", onEnd);
-    };
-  }, [queryClient]);
 
   useEffect(() => {
     if (user?.role === "teacher") {
@@ -126,7 +90,7 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
         { to: "/schedule", label: "Расписание", short: "Пары", icon: CalendarDays, action: "nav-schedule" },
         { to: "/teach/journal", label: "Журнал", icon: GraduationCap, action: "nav-journal" },
         { to: "/teach/homework", label: "Проверка", icon: FileText, action: "nav-queue" },
-        { to: "/teach/assign", label: "Задание", icon: ClipboardList },
+        { to: "/teach/assignments", label: "Задания", icon: ClipboardList, action: "nav-assignments" },
         { to: "/teach/announce", label: "Группы", icon: Megaphone },
         { to: "/notifications", label: "Уведомления", icon: Bell, badge: unread, action: "nav-notifications" },
         { to: "/profile", label: "Профиль", icon: UserRound },
@@ -193,11 +157,6 @@ function Frame({ logout }: { logout: () => Promise<void> }) {
             </NavLink>
           </div>
         </header>
-        {(pull > 0 || refreshed) ? (
-          <div className="pointer-events-none fixed left-1/2 z-40 grid h-11 w-11 -translate-x-1/2 place-items-center rounded-full bg-white text-sm shadow" style={{ top: `calc(${Math.max(pull, refreshed ? 28 : 0)}px + env(safe-area-inset-top))`, transform: `translateX(-50%) rotate(${pull * 2}deg)` }} aria-hidden>
-            {refreshed ? "✓" : "↓"}
-          </div>
-        ) : null}
         <main id="content" className="mx-auto w-full min-w-0 px-4 pb-4 pt-4 md:px-6 md:pb-10 md:pt-6">
           <AnimatePresence initial={false}>
             <motion.div

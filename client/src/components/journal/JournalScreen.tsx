@@ -122,7 +122,7 @@ export function JournalScreen({ readOnly = false, endpoint = "/api/teach/journal
         <GradingDialog group={data.groupName} discipline={data.discipline} scheme={data.scheme} endpoint={endpoint} readOnly={readOnly} onDone={() => void journal.refetch()} />
       </div>
       <p className="flex flex-wrap gap-1 text-xs text-[var(--muted)]">{Object.entries(WORK_TYPES).map(([key, item]) => <span key={key} className={`rounded-full px-2 py-1 ${TONES[item.tone]}`}>{item.short}</span>)} <span>Н — нет, Б — болел, О — опоздал, У — уважительная</span></p>
-      {data.students.length === 0 && data.lessons.length === 0 && data.columns.length === 0 ? <EmptyState title="В этом периоде пар нет" text="Покажите семестр целиком." action={<Button onClick={() => { const term = semesterBounds(); set({ from: term.from, to: term.to }); }}>Показать семестр</Button>} /> : mode === "lesson" ? <LessonMode data={data} readOnly={readOnly} onDone={() => void journal.refetch()} /> : <Grid data={data} focus={focus} studentFocus={params.get("student") || ""} readOnly={readOnly} onDone={() => void journal.refetch()} />}
+      {data.students.length === 0 && data.lessons.length === 0 && data.columns.length === 0 ? <EmptyState title="В этом периоде пар нет" text="Покажите семестр целиком." action={<Button onClick={() => { const term = semesterBounds(); set({ from: term.from, to: term.to }); }}>Показать семестр</Button>} /> : mode === "lesson" ? <LessonMode data={data} readOnly={readOnly} onDone={() => void journal.refetch()} /> : <Grid data={data} focus={focus} studentFocus={params.get("student") || ""} marked={params.get("hl") || ""} readOnly={readOnly} onDone={() => void journal.refetch()} />}
     </div>
   );
 }
@@ -314,7 +314,8 @@ function viewColumns(data: Payload, focus: string): Column[] {
   return list.sort((a, b) => a.date.localeCompare(b.date) || (a.position ?? 0) - (b.position ?? 0) || a.id - b.id);
 }
 
-function Grid({ data, focus, studentFocus, readOnly, onDone }: { data: Payload; focus: string; studentFocus: string; readOnly: boolean; onDone: () => void }) {
+function Grid({ data, focus, studentFocus, marked = "", readOnly, onDone }: { data: Payload; focus: string; studentFocus: string; marked?: string; readOnly: boolean; onDone: () => void }) {
+  const picked = new Set(marked.split(",").filter(Boolean).map(Number));
   const [cell, setCell] = useState<string | null>(null);
   const columns = viewColumns(data, focus);
   const today = moscowToday();
@@ -325,6 +326,15 @@ function Grid({ data, focus, studentFocus, readOnly, onDone }: { data: Payload; 
     const grid = node?.closest("[data-scroll-x]");
     if (node instanceof HTMLElement && grid instanceof HTMLElement) scrollCellIntoView(node, grid);
   }, [focus, studentFocus, columns.length]);
+  useEffect(() => {
+    const first = marked.split(",").filter(Boolean)[0];
+    if (!first) return;
+    const timer = window.setTimeout(() => {
+      const row = document.querySelector(`[data-agent-target="journal-row-${first}"]`);
+      if (row instanceof HTMLElement) row.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [marked, data.students.length]);
   useEffect(() => {
     const open = (event: Event) => setCell((event as CustomEvent<{ id: string }>).detail.id);
     const close = () => setCell(null);
@@ -347,7 +357,7 @@ function Grid({ data, focus, studentFocus, readOnly, onDone }: { data: Payload; 
         </thead>
         <tbody>
           {data.students.map((student) => (
-            <tr key={student.id}>
+            <tr key={student.id} data-agent-target={`journal-row-${student.id}`} className={picked.has(student.id) ? "agent-row-hl" : undefined} aria-current={picked.has(student.id) ? "true" : undefined}>
               <th className="sticky left-0 z-10 whitespace-nowrap bg-[var(--surface-solid)] px-2 py-1 text-left font-semibold" scope="row" title={student.name}>{student.short}</th>
               {columns.map((column) => {
                 const found = column.id ? data.cells.find((item) => item.studentId === student.id && item.columnId === column.id) : undefined;

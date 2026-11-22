@@ -11,7 +11,7 @@ import { AuditPage, NotFoundPage, NotificationsPage, ProfilePage, RegulationsPag
 import { NewRequestPage, RequestPage, RequestsPage } from "./pages/requests";
 import { HomeworkDetail, HomeworkPage } from "./pages/homework";
 import { SchedulePage } from "./pages/schedule";
-import { TeachAnnounce, TeachAssignment, TeachHome, TeachIssue, TeachJournal, TeachQueue } from "./pages/teach";
+import { TeachAnnounce, TeachAssignment, TeachAssignments, TeachHome, TeachIssue, TeachJournal, TeachQueue } from "./pages/teach";
 import { JournalScreen } from "./components/journal/JournalScreen";
 
 function RequireAuth() {
@@ -45,6 +45,7 @@ export function App() {
           <Route path="/teach/journal" element={<TeacherGate><TeachJournal /></TeacherGate>} />
           <Route path="/teach/homework" element={<TeacherGate><TeachQueue /></TeacherGate>} />
           <Route path="/teach/homework/:id" element={<TeacherGate><TeachAssignment /></TeacherGate>} />
+          <Route path="/teach/assignments" element={<TeacherGate><TeachAssignments /></TeacherGate>} />
           <Route path="/teach/assign" element={<TeacherGate><TeachIssue /></TeacherGate>} />
           <Route path="/teach/announce" element={<TeacherGate><TeachAnnounce /></TeacherGate>} />
           <Route path="/requests" element={<StudentGate><RequestsPage /></StudentGate>} />

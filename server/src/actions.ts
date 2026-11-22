@@ -47,6 +47,7 @@ import {
   journalColumns,
 } from "./db/schema";
 import { publish } from "./hub";
+import { teacherAssignmentsInfo, teacherGroupInfo, teacherStudentInfo } from "./insight";
 import { badRequest, forbidden, HttpError, notFound } from "./httpError";
 import { proposeWithCloud, proposeWithLocal, type ChatTurn } from "./llm";
 import {
@@ -1294,6 +1295,15 @@ const handlers: Record<string, (user: PublicUser, args: Record<string, unknown>)
     const summary = await markAbsentToday(user, args.names as string[]);
     return { summary, ui: [{ type: "navigate", to: "/teach/journal", highlight: "journal" }] };
   },
+  async teacher_student_info(user, args) {
+    return teacherStudentInfo(user, args as { studentName: string; groupName?: string; discipline?: string; topic?: string });
+  },
+  async teacher_group_info(user, args) {
+    return teacherGroupInfo(user, args as { groupName?: string; discipline?: string; topic: string });
+  },
+  async teacher_list_assignments(user, args) {
+    return teacherAssignmentsInfo(user, args as { groupName?: string; discipline?: string });
+  },
   async teacher_subject_summary(user, args) {
     const summary = await subjectSummary(user, String(args.discipline));
     return { summary, ui: [{ type: "navigate", to: "/teach/homework", highlight: "queue" }] };
@@ -1797,7 +1807,7 @@ export async function studentBrief(user: PublicUser) {
 
 export async function runTurn(
   user: PublicUser,
-  input: { message: string; proposal?: unknown; mode?: string; history?: ChatTurn[] },
+  input: { message: string; proposal?: unknown; mode?: string; history?: ChatTurn[]; context?: string },
 ): Promise<{
   mode: "device" | "fallback" | "server" | "cloud";
   caption: string;
@@ -1852,6 +1862,16 @@ export async function runTurn(
     if (caption !== "Модель не ответила — локальные правила") caption = "Локальный режим";
   }
 
+  const page = pageContext(input.context);
+  if (page.groupName || page.discipline) {
+    for (const call of proposal.steps) {
+      if (!["teacher_student_info", "teacher_group_info"].includes(call.tool)) continue;
+      const args = (call.args ?? {}) as Record<string, unknown>;
+      if (!args.groupName && !args.discipline && page.groupName) args.groupName = page.groupName;
+      if (!args.discipline && page.discipline && (!args.groupName || args.groupName === page.groupName)) args.discipline = page.discipline;
+      call.args = args;
+    }
+  }
   const steps: { label: string; status: "ok" | "error" | "skipped"; detail?: string; tool?: string }[] = [];
   const ui: UiDirective[] = [];
   const cards: AnswerCard[] = [];
@@ -1902,6 +1922,17 @@ export async function runTurn(
   if (nav && nav.type === "navigate") link = { to: nav.to, label: "На странице" };
   const open = nav && nav.type === "navigate" ? nav.to : undefined;
   return { mode, caption, say, steps, ui: nextUi, confirm, citations, download, undo, cards, choices, link, open, fill };
+}
+
+/** Группа и предмет из открытого журнала: «оценки Сорокина» без предмета смотрим там, где стоит преподаватель. */
+function pageContext(context?: string) {
+  if (!context || !context.startsWith("/teach/journal")) return {} as { groupName?: string; discipline?: string };
+  try {
+    const url = new URL(context, "http://local");
+    return { groupName: url.searchParams.get("group") || undefined, discipline: url.searchParams.get("discipline") || undefined };
+  } catch {
+    return {};
+  }
 }
 
 const ACT_TOOLS = new Set([
@@ -2085,6 +2116,37 @@ export async function confirmPending(user: PublicUser, pendingId: string) {
     await getDb().update(pendingActions).set({ consumedAt: null }).where(eq(pendingActions.id, pendingId));
     throw error;
   }
+}
+
+/** Состояние карточек из сохранённой истории чата: можно ли ещё подтвердить или отменить. */
+export async function cardStatus(user: PublicUser, pendingIds: string[], auditIds: number[]) {
+  const pending: Record<string, "open" | "done" | "expired" | "gone"> = {};
+  const audits: Record<string, "undoable" | "undone" | "stale" | "gone"> = {};
+  if (pendingIds.length) {
+    const rows = await getDb().select().from(pendingActions).where(and(eq(pendingActions.userId, user.id), inArray(pendingActions.id, pendingIds)));
+    for (const id of pendingIds) {
+      const row = rows.find((item) => item.id === id);
+      pending[id] = !row ? "gone" : row.consumedAt ? "done" : new Date(row.expiresAt).getTime() < Date.now() ? "expired" : "open";
+    }
+  }
+  if (auditIds.length) {
+    const rows = await getDb().select().from(auditLog).where(and(eq(auditLog.userId, user.id), inArray(auditLog.id, auditIds)));
+    const markIds = rows.flatMap((row) => {
+      const undo = row.undo as { type?: string; markId?: number } | null;
+      return undo && (undo.type === "mark" || undo.type === "mark_cell") && undo.markId ? [undo.markId] : [];
+    });
+    const alive = markIds.length ? new Set((await getDb().select({ id: marks.id }).from(marks).where(inArray(marks.id, markIds))).map((row) => row.id)) : new Set<number>();
+    for (const id of auditIds) {
+      const row = rows.find((item) => item.id === id);
+      if (!row) { audits[id] = "gone"; continue; }
+      if (row.undoneAt) { audits[id] = "undone"; continue; }
+      const undo = row.undo as { type?: string; markId?: number; created?: boolean } | null;
+      if (!row.reversible || !undo) { audits[id] = "stale"; continue; }
+      if ((undo.type === "mark" || undo.type === "mark_cell") && undo.markId && !alive.has(undo.markId)) { audits[id] = "stale"; continue; }
+      audits[id] = "undoable";
+    }
+  }
+  return { pending, audits };
 }
 
 export async function rejectPending(user: PublicUser, pendingId: string) {

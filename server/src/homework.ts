@@ -214,12 +214,87 @@ export async function teacherQueue(user: PublicUser) {
         deadline: assignment.deadline,
         maxScore: assignment.maxScore,
         studentName: student.fullName,
+        submittedAt: sub.updatedAt,
         submission: presentSubmission(sub),
       };
     })
     .filter((row): row is NonNullable<typeof row> => Boolean(row));
   items.sort((a, b) => (rank[a.submission.status] ?? 9) - (rank[b.submission.status] ?? 9));
   return items;
+}
+
+/** Очередь для раздела «Проверка»: сданные работы плюс те, кто не сдал к прошедшему сроку. */
+export async function teacherReview(user: PublicUser) {
+  const queue = await teacherQueue(user);
+  const load = await loadForTeacher(user.id);
+  if (!load.length) return { queue, missing: [] };
+  const today = moscowToday();
+  const rows = await getDb().select().from(assignments).where(eq(assignments.teacherId, user.id));
+  const overdue = rows.filter((row) => row.deadline < today && load.some((item) => item.groupName === row.groupName && item.discipline === row.discipline));
+  if (!overdue.length) return { queue, missing: [] };
+  const groups = [...new Set(overdue.map((row) => row.groupName))];
+  const people = await getDb().select().from(users).where(and(eq(users.role, "student"), inArray(users.groupName, groups))).orderBy(asc(users.fullName));
+  const subs = await getDb().select().from(submissions).where(inArray(submissions.assignmentId, overdue.map((row) => row.id)));
+  const done = new Set(subs.filter((row) => ["submitted", "in_review", "graded", "returned"].includes(row.status)).map((row) => `${row.assignmentId}:${row.studentId}`));
+  const byKey = new Map(subs.map((row) => [`${row.assignmentId}:${row.studentId}`, row]));
+  const missing = overdue.flatMap((assignment) => people
+    .filter((person) => person.groupName === assignment.groupName && !done.has(`${assignment.id}:${person.id}`))
+    .map((person) => ({
+      assignmentId: assignment.id,
+      title: assignment.title,
+      kind: assignment.kind,
+      discipline: assignment.discipline,
+      groupName: assignment.groupName,
+      deadline: assignment.deadline,
+      maxScore: assignment.maxScore,
+      studentName: person.fullName,
+      submittedAt: null as string | null,
+      submission: presentSubmission(byKey.get(`${assignment.id}:${person.id}`)),
+    })));
+  return { queue, missing };
+}
+
+function tally(subs: (typeof submissions.$inferSelect)[], studentIds: Set<number>) {
+  const own = subs.filter((row) => studentIds.has(row.studentId));
+  const count = (...statuses: string[]) => own.filter((row) => statuses.includes(row.status)).length;
+  return {
+    total: studentIds.size,
+    turnedIn: count("submitted", "in_review", "graded"),
+    review: count("submitted", "in_review"),
+    graded: count("graded"),
+    returned: count("returned"),
+    inProgress: count("in_progress"),
+  };
+}
+
+export async function teacherAssignments(user: PublicUser) {
+  if (user.role !== "teacher") throw forbidden();
+  const load = await loadForTeacher(user.id);
+  if (!load.length) return [];
+  const rows = await getDb().select().from(assignments).where(eq(assignments.teacherId, user.id)).orderBy(asc(assignments.deadline), asc(assignments.id));
+  const allowed = rows.filter((row) => load.some((item) => item.groupName === row.groupName && item.discipline === row.discipline));
+  if (!allowed.length) return [];
+  const ids = allowed.map((row) => row.id);
+  const subs = await getDb().select().from(submissions).where(inArray(submissions.assignmentId, ids));
+  const groups = [...new Set(allowed.map((row) => row.groupName))];
+  const people = await getDb().select().from(users).where(and(eq(users.role, "student"), inArray(users.groupName, groups)));
+  const today = moscowToday();
+  return allowed.map((row) => {
+    const studentIds = new Set(people.filter((person) => person.groupName === row.groupName).map((person) => person.id));
+    return {
+      id: row.id,
+      title: row.title,
+      discipline: row.discipline,
+      groupName: row.groupName,
+      kind: row.kind,
+      kindLabel: KIND_LABEL[row.kind as HomeworkKind] ?? row.kind,
+      deadline: row.deadline,
+      issuedOn: row.issuedOn,
+      overdue: row.deadline < today,
+      attachments: (row.attachments ?? []).length,
+      counts: tally(subs.filter((sub) => sub.assignmentId === row.id), studentIds),
+    };
+  });
 }
 
 export async function getTeacherAssignment(user: PublicUser, id: number) {
@@ -245,6 +320,10 @@ export async function getTeacherAssignment(user: PublicUser, id: number) {
     maxScore: assignment.maxScore,
     maxPoints: linked?.maxPoints ?? Math.max(assignment.maxScore, 10),
     columnId: linked?.id ?? null,
+    issuedOn: assignment.issuedOn,
+    attachments: assignment.attachments ?? [],
+    overdue: assignment.deadline < moscowToday(),
+    counts: tally(subs, new Set(people.map((student) => student.id))),
     students: people.map((student) => ({
       name: student.fullName,
       submission: presentSubmission(subs.find((row) => row.studentId === student.id)),

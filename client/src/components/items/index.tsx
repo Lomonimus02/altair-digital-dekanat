@@ -88,22 +88,30 @@ export function ItemSkeleton({ kind = "lesson" }: { kind?: string }) {
 
 const LESSON_KIND = { lecture: "lecture", practice: "practice", lab: "lab", seminar: "seminar", exam: "exam", credit: "credit" } as const;
 
-export function LessonItem({ start, end, title, kind, room, teacher, group, state = "normal", note, action }: {
+export function LessonItem({ start, end, title, kind, room, teacher, group, state = "normal", note, action, badge, live = false, conflict = false }: {
   start: string; end: string; title: string; kind: keyof typeof LESSON_KIND | string;
-  room?: string; teacher?: string; group?: string; state?: "normal" | "cancelled" | "moved" | "now"; note?: string; action?: ReactNode;
+  room?: string; teacher?: string; group?: string; state?: "normal" | "cancelled" | "moved" | "moved-from" | "moved-to" | "room" | "now"; note?: string; action?: ReactNode;
+  badge?: string; live?: boolean; conflict?: boolean;
 }) {
+  const struck = state === "cancelled" || state === "moved-from";
+  const accent = live || state === "now";
   return (
-    <div className={`item-row ${state === "cancelled" ? "opacity-60" : ""}`} data-ui="lesson" style={state === "now" ? { boxShadow: "inset 3px 0 0 var(--brand)" } : undefined}>
+    <div className={`item-row ${struck ? "opacity-60" : ""}`} data-ui="lesson" data-lesson-state={state} style={accent ? { boxShadow: "inset 3px 0 0 var(--brand)" } : undefined}>
       <div>
-        <div data-ui-part="time" className="t-value">{start}</div>
+        <div data-ui-part="time" className={`t-value ${struck ? "line-through" : ""}`}>{start}</div>
         <div data-ui-part="meta" className="t-muted">{end}</div>
       </div>
       <div className="min-w-0">
-        <div data-ui-part="title" className={`t-title item-title ${state === "cancelled" ? "line-through" : ""}`} title={title}>{glueLast(title)}</div>
+        <div data-ui-part="title" className={`t-title item-title ${struck ? "line-through" : ""}`} title={title}>{glueLast(title)}</div>
         <div className="item-meta-line mt-1">
           <Chip>{kindChip(kind)}</Chip>
-          {state === "cancelled" ? <StatusPill tone="red">Отменена</StatusPill> : null}
+          {live ? <StatusPill tone="green">Идёт сейчас</StatusPill> : null}
+          {state === "cancelled" ? <StatusPill tone="red">Отменено</StatusPill> : null}
           {state === "moved" ? <StatusPill tone="amber">Перенос</StatusPill> : null}
+          {state === "moved-from" ? <StatusPill tone="amber">{badge ?? "Перенесено"}</StatusPill> : null}
+          {state === "moved-to" ? <StatusPill tone="blue">{badge ?? "Перенесено сюда"}</StatusPill> : null}
+          {state === "room" ? <StatusPill tone="blue">{badge ?? "Другая аудитория"}</StatusPill> : null}
+          {conflict ? <StatusPill tone="red">Накладка</StatusPill> : null}
           {room ? <Meta icon="door">{room}</Meta> : null}
           {group ? <Meta>{group}</Meta> : teacher ? <Meta icon="user">{teacher}</Meta> : null}
         </div>

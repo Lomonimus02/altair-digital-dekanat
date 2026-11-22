@@ -168,7 +168,8 @@ export async function loadJournal(user: PublicUser, groupName: string, disciplin
       startsAt: row.startsAt,
       pairNumber: row.pairNumber,
       topic: topicOf.get(row.date) ?? null,
-      cancelled: row.changeType === "cancelled",
+      cancelled: !lessonHeld(row),
+      moved: row.changeType === "moved" && !lessonHeld(row),
     })),
     columns: columnRows.map((row) => ({
       id: row.id,

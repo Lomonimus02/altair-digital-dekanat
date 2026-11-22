@@ -46,6 +46,10 @@ export interface AgentMessage {
   download?: { href: string; label: string };
   undo?: { auditId: number; label: string };
   undone?: boolean;
+  /** Карточка из сохранённой истории, которую уже нельзя подтвердить. */
+  confirmState?: "done" | "expired" | "gone";
+  undoState?: "stale";
+  restored?: boolean;
   link?: { to: string; label: string };
   cards?: AnswerCard[];
   choices?: ChoiceChip[];
@@ -98,11 +102,35 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
   const storageKey = `altair-chat:${user.id}`;
   const [messages, setMessages] = useState<AgentMessage[]>(() => {
     try {
-      return JSON.parse(localStorage.getItem(storageKey) || "[]");
+      const saved = JSON.parse(localStorage.getItem(storageKey) || "[]") as AgentMessage[];
+      return saved.map((item) => (item.choices?.length || item.confirm || item.undo ? { ...item, restored: true } : item));
     } catch {
       return [];
     }
   });
+  const checkedRef = useRef(false);
+  useEffect(() => {
+    if (checkedRef.current) return;
+    checkedRef.current = true;
+    const pendingIds = messages.flatMap((item) => (item.restored && item.confirm && !item.confirmState ? [item.confirm.pendingId] : []));
+    const auditIds = messages.flatMap((item) => (item.restored && item.undo && !item.undone && !item.undoState ? [item.undo.auditId] : []));
+    if (!pendingIds.length && !auditIds.length) return;
+    void api<{ pending: Record<string, string>; audits: Record<string, string> }>("/api/agent/status", { method: "POST", body: JSON.stringify({ pendingIds: pendingIds.slice(-40), auditIds: auditIds.slice(-40) }) })
+      .then((status) => {
+        setMessages((current) => current.map((item) => {
+          let next = item;
+          const pending = item.confirm ? status.pending[item.confirm.pendingId] : undefined;
+          if (pending && pending !== "open") next = { ...next, confirmState: pending as "done" | "expired" | "gone" };
+          const audit = item.undo ? status.audits[String(item.undo.auditId)] : undefined;
+          if (audit === "undone") next = { ...next, undone: true };
+          else if (audit === "stale" || audit === "gone") next = { ...next, undoState: "stale" };
+          return next;
+        }));
+      })
+      .catch(() => {
+        setMessages((current) => current.map((item) => (item.restored && item.confirm ? { ...item, confirmState: "expired" } : item)));
+      });
+  }, [messages]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [open, setOpenState] = useState(false);
@@ -181,11 +209,11 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
       try {
         response = await api<Turn>("/api/agent/turn", {
           method: "POST",
-          body: JSON.stringify({ message, history, mode, proposal }),
+          body: JSON.stringify({ message, history, mode, proposal, context: `${window.location.pathname}${window.location.search}`.slice(0, 400) }),
         });
       } catch (error) {
         if (!proposal) throw error;
-        response = await api<Turn>("/api/agent/turn", { method: "POST", body: JSON.stringify({ message, mode: "fallback" }) });
+        response = await api<Turn>("/api/agent/turn", { method: "POST", body: JSON.stringify({ message, mode: "fallback", context: `${window.location.pathname}${window.location.search}`.slice(0, 400) }) });
       }
       const navigateTo = response.ui?.find((item) => item.type === "navigate");
       const wide = window.matchMedia("(min-width: 768px)").matches;
@@ -265,7 +293,7 @@ export function AgentProvider({ user, children }: { user: PublicUser; children: 
   const clarify = async (choice: ChoiceChip) => {
     if (busy) return;
     setOpen(true);
-    setMessages((current) => [...current, { id: rid(), role: "user", text: choice.label }]);
+    setMessages((current) => [...current.map((item) => (item.choices?.some((row) => row.clarificationId === choice.clarificationId) ? { ...item, restored: true } : item)), { id: rid(), role: "user", text: `Выбрано: ${choice.label}` }]);
     setBusy(true);
     try {
       const response = await api<Turn>("/api/agent/clarify", {

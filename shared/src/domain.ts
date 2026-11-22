@@ -166,6 +166,10 @@ export interface LessonView {
   pairNumber: number;
   flagged: boolean;
   groupName?: string | null;
+  /** Для переноса: from — старое место (пары там нет), to — новое место. */
+  moveRole?: "from" | "to" | null;
+  movedTo?: { date: string; startsAt: string; room: string | null } | null;
+  movedFrom?: { date: string; startsAt: string } | null;
 }
 
 export type MarkKind = "current" | "exam" | "credit";

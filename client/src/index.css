@@ -87,6 +87,7 @@
 html, body, #root { min-height: 100%; }
 html { scrollbar-gutter: stable; }
 html, body { overflow-x: clip; }
+html, body { overscroll-behavior-y: none; }
 * { scrollbar-width: thin; scrollbar-color: rgba(16, 36, 28, 0.35) transparent; }
 .chip-row {
   overflow-x: auto;
@@ -553,3 +554,7 @@ html[data-keyboard="1"] .composer { padding-bottom: 0; }
     0 12px 32px rgba(0, 0, 0, 0.45),
     0 0 0 2px var(--primary);
 }
+
+/* Строки, которые показал агент: подсветка остаётся, пока открыт этот вид журнала. */
+.agent-row-hl > th, .agent-row-hl > td { background: color-mix(in srgb, var(--primary) 16%, var(--surface-solid)) !important; }
+.agent-row-hl > th { box-shadow: inset 3px 0 0 var(--primary); }

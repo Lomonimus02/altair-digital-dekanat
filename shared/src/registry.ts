@@ -235,6 +235,21 @@ export const schemas = {
   teacher_subject_summary: z.object({
     discipline: z.string().trim().min(2).max(160),
   }),
+  teacher_student_info: z.object({
+    studentName: z.string().trim().min(2).max(80),
+    groupName: z.string().trim().min(2).max(40).optional(),
+    discipline: z.string().trim().min(2).max(160).optional(),
+    topic: z.enum(["grades", "average", "attendance", "all"]).optional(),
+  }),
+  teacher_group_info: z.object({
+    groupName: z.string().trim().min(2).max(40).optional(),
+    discipline: z.string().trim().min(2).max(160).optional(),
+    topic: z.enum(["roster", "no_grade", "debts", "attendance"]),
+  }),
+  teacher_list_assignments: z.object({
+    groupName: z.string().trim().min(2).max(40).optional(),
+    discipline: z.string().trim().min(2).max(160).optional(),
+  }),
   teacher_set_attendance: z.object({
     groupName: z.string().trim().min(2).max(40).optional(),
     discipline: z.string().trim().min(2).max(160).optional(),
@@ -318,6 +333,9 @@ export const registry: RegistryItem[] = [
   item("teacher_update_grading", "consequential", ["teacher"], "Система оценивания предмета", "groupName?, discipline?, workType?, maxPoints?, weight?, excellent?, good?, satisfactory?"),
   item("teacher_mark_absent", "reversible", ["teacher"], "Отметить отсутствующих на сегодня", "names"),
   item("teacher_subject_summary", "read", ["teacher"], "Сводка по предмету", "discipline"),
+  item("teacher_student_info", "read", ["teacher"], "Оценки, средний балл и пропуски студента", "studentName, groupName?, discipline?, topic?: grades|average|attendance|all"),
+  item("teacher_group_info", "read", ["teacher"], "Список группы, кто без оценок, должники, пропуски", "groupName?, discipline?, topic: roster|no_grade|debts|attendance"),
+  item("teacher_list_assignments", "read", ["teacher"], "Выданные задания и сколько сдали", "groupName?, discipline?"),
   item("teacher_set_attendance", "consequential", ["teacher"], "Отметить присутствие", "groupName, discipline, date, studentName, present"),
   item("teacher_announce", "consequential", ["teacher"], "Объявление своим группам", "groupName, title, body"),
 ];
@@ -394,6 +412,9 @@ export function stepLabel(tool: string, args: Record<string, unknown> = {}): str
     teacher_update_grading: "Меняю систему оценивания…",
     teacher_mark_absent: "Отмечаю отсутствующих…",
     teacher_subject_summary: "Собираю сводку по предмету…",
+    teacher_student_info: "Смотрю журнал студента…",
+    teacher_group_info: "Смотрю журнал группы…",
+    teacher_list_assignments: "Смотрю выданные задания…",
     teacher_set_attendance: "Отмечаю присутствие…",
     teacher_announce: "Готовлю объявление группе…",
   };

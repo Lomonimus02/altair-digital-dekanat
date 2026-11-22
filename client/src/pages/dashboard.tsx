@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { useAction } from "../lib/action";
 import { useAgent } from "../lib/agent";
 import { useAuth } from "../lib/auth";
+import { lessonView } from "../lib/lesson";
 import { EmptyLine, ItemSkeleton, LessonItem, NotificationItem, RequestItem, SectionHeader, StatusPill, WorkItem } from "../components/items";
 import { fmtDate, noticeView } from "../lib/format";
 import { ErrorState, Glass, LoadingBlock } from "../components/ui";
@@ -114,7 +115,7 @@ function StaffHome() {
 function LessonLine({ lesson, ask = false }: { lesson: LessonView; ask?: boolean }) {
   const agent = useAgent();
   const run = useAction();
-  const state = lesson.changeType === "cancelled" ? "cancelled" : lesson.changeType === "moved" || lesson.changeType === "room" ? "moved" : "normal";
+  const view = lessonView(lesson);
   return (
     <div data-agent-target={`lesson-${lesson.id}`}>
       <LessonItem
@@ -124,8 +125,9 @@ function LessonLine({ lesson, ask = false }: { lesson: LessonView; ask?: boolean
         kind={lesson.kind}
         room={lesson.room ?? undefined}
         teacher={lesson.teacher ?? undefined}
-        state={state}
-        note={lesson.changeNote ?? undefined}
+        state={view.state}
+        badge={view.badge}
+        note={view.note}
         action={ask ? (
           <button type="button" className="btn btn-quiet h-11 whitespace-nowrap px-3" data-agent-action="schedule-star" aria-pressed={lesson.flagged} onClick={() => void run("mark_schedule_item", { scheduleItemId: lesson.id, flagged: !lesson.flagged })}>
             {lesson.flagged ? "Пара отмечена" : "Отметить пару"}

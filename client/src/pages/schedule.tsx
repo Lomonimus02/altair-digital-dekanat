@@ -3,6 +3,8 @@ import { type LessonView } from "@shared/domain";
 import { addDays, formatDdMm, formatWeekSpan, scheduleLook } from "@shared/dates";
 import { useAuth } from "../lib/auth";
 import { useRef } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { held, lessonView } from "../lib/lesson";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAction } from "../lib/action";
@@ -78,6 +80,11 @@ export function SchedulePage() {
           <button className="btn btn-glass h-11 px-4" onClick={() => shift(7)}>Следующая неделя</button>
         </div>
       </div>
+      <div className="flex items-center justify-between gap-2 xl:hidden">
+        <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-black/5 dark:bg-white/10" aria-label="Предыдущая неделя" onClick={() => shift(-7)}><ChevronLeft className="h-5 w-5" aria-hidden /></button>
+        <p className="min-w-0 truncate text-center text-sm font-semibold">{weekLabel(schedule.data.days)}</p>
+        <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-black/5 dark:bg-white/10" aria-label="Следующая неделя" onClick={() => shift(7)}><ChevronRight className="h-5 w-5" aria-hidden /></button>
+      </div>
       <div className="chip-row sticky top-0 z-20 -mx-1 flex justify-between gap-1 py-1 xl:hidden">
         {schedule.data.days.map((day) => {
           const selected = day.date === focus;
@@ -123,22 +130,33 @@ function shortDay(name: string) {
   return map[name] ?? name.slice(0, 2).toUpperCase();
 }
 
+function moscowClock() {
+  const parts = new Intl.DateTimeFormat("ru-RU", { timeZone: "Europe/Moscow", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
+  return parts.replace(/[^0-9:]/g, "");
+}
+
 function DayCard({ day, today }: { day?: { date: string; weekday: string; items: LessonView[] }; today: string }) {
   if (!day) return null;
+  const isToday = day.date === today;
+  const clock = isToday ? moscowClock() : "";
+  const live = day.items.find((lesson) => held(lesson) && clock >= lesson.startsAt && clock < lesson.endsAt);
+  const slots = new Map<string, number>();
+  for (const lesson of day.items) if (held(lesson)) slots.set(lesson.startsAt, (slots.get(lesson.startsAt) ?? 0) + 1);
   return (
-    <Glass target={`schedule-day-${day.date}`} className={day.date === today ? "border border-green-400/50 bg-green-500/10" : ""}>
-      <div className={`-mx-4 -mt-4 mb-3 rounded-t-[2rem] px-4 py-3 sm:-mx-5 sm:-mt-5 ${day.date === today ? "bg-green-500/10" : "bg-slate-700/10"}`}>
+    <Glass target={`schedule-day-${day.date}`} className={isToday ? "border border-green-400/50 bg-green-500/10" : ""}>
+      <div className={`-mx-4 -mt-4 mb-3 flex items-center justify-between gap-2 rounded-t-[2rem] px-4 py-3 sm:-mx-5 sm:-mt-5 ${isToday ? "bg-green-500/10" : "bg-slate-700/10"}`}>
         <h2 className="text-lg font-semibold">{day.weekday}, {formatDdMm(day.date)}</h2>
+        {isToday ? <span className="t-chip rounded-full bg-[var(--primary)] px-2 py-0.5 text-[var(--primary-ink)]">Сегодня</span> : null}
       </div>
-      {day.items.length ? day.items.map((lesson) => <Lesson key={lesson.id} lesson={lesson} />) : <p className="py-8 text-center text-sm text-[var(--muted)]">Занятий нет</p>}
+      {day.items.length ? day.items.map((lesson) => <Lesson key={lesson.id} lesson={lesson} live={live?.id === lesson.id} conflict={held(lesson) && (slots.get(lesson.startsAt) ?? 0) > 1} />) : <p className="py-8 text-center text-sm text-[var(--muted)]">Занятий нет</p>}
     </Glass>
   );
 }
 
-function Lesson({ lesson }: { lesson: LessonView }) {
+function Lesson({ lesson, live, conflict }: { lesson: LessonView; live: boolean; conflict: boolean }) {
   const run = useAction();
   const { user } = useAuth();
-  const state = lesson.changeType === "cancelled" ? "cancelled" : lesson.changeType === "none" ? "normal" : "moved";
+  const view = lessonView(lesson);
   return (
     <article data-agent-target={`lesson-${lesson.id}`}>
       <LessonItem
@@ -149,9 +167,12 @@ function Lesson({ lesson }: { lesson: LessonView }) {
         room={lesson.room || undefined}
         teacher={user?.role === "teacher" ? undefined : lesson.teacher || undefined}
         group={user?.role === "teacher" ? lesson.groupName || undefined : undefined}
-        state={state}
-        note={lesson.changeNote ?? undefined}
-        action={user?.role === "teacher" ? null : (
+        state={view.state}
+        badge={view.badge}
+        note={view.note}
+        live={live}
+        conflict={conflict}
+        action={user?.role === "teacher" || !held(lesson) ? null : (
           <button
             className="btn btn-quiet h-11 px-3"
             data-agent-action="schedule-star"

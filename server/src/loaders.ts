@@ -50,6 +50,40 @@ export async function findUserById(id: number) {
   return rows[0] ?? null;
 }
 
+function moveRoleOf(row: { changeType: string; changeNote: string | null }): "from" | "to" | null {
+  if (row.changeType !== "moved") return null;
+  const note = (row.changeNote ?? "").toLowerCase();
+  if (note.includes("перенесено с")) return "to";
+  if (note.includes("перенесено на") || note.includes("перенос на")) return "from";
+  return "to";
+}
+
+/** Связывает старое и новое место перенесённой пары (одна группа и предмет, в пределах двух недель). */
+async function linkMoves(items: LessonView[]) {
+  const moved = items.filter((item) => item.changeType === "moved");
+  for (const item of items) item.moveRole = moveRoleOf(item);
+  if (!moved.length) return items;
+  const dates = moved.map((item) => item.date).sort();
+  const groups = [...new Set(moved.map((item) => item.groupName).filter((name): name is string => Boolean(name)))];
+  if (!groups.length) return items;
+  const around = await getDb()
+    .select()
+    .from(scheduleItems)
+    .where(and(inArray(scheduleItems.groupName, groups), eq(scheduleItems.changeType, "moved"), gte(scheduleItems.date, addDays(dates[0], -14)), lte(scheduleItems.date, addDays(dates[dates.length - 1], 14))))
+    .orderBy(asc(scheduleItems.date), asc(scheduleItems.startsAt));
+  for (const item of moved) {
+    const peers = around.filter((row) => row.id !== item.id && row.groupName === item.groupName && row.discipline === item.discipline);
+    if (item.moveRole === "from") {
+      const target = peers.find((row) => moveRoleOf(row) === "to" && row.date >= item.date);
+      item.movedTo = target ? { date: target.date, startsAt: target.startsAt, room: target.room } : null;
+    } else {
+      const source = [...peers].reverse().find((row) => moveRoleOf(row) === "from" && row.date <= item.date);
+      item.movedFrom = source ? { date: source.date, startsAt: source.startsAt } : null;
+    }
+  }
+  return items;
+}
+
 export async function loadSchedule(user: PublicUser, focus: string, includeCancelled = true) {
   if (user.role === "teacher") return loadTeacherSchedule(user, focus, includeCancelled);
   if (!user.groupName) return { today: focus, focus, weekStart: mondayOf(focus), days: [], items: [] as LessonView[] };
@@ -84,6 +118,7 @@ export async function loadSchedule(user: PublicUser, focus: string, includeCance
       flagged: flagged.has(row.id),
       groupName: row.groupName,
     }));
+  await linkMoves(items);
   await notifySoonChanges(user.id, items);
   return {
     today: focus,
@@ -137,6 +172,7 @@ async function loadTeacherSchedule(user: PublicUser, focus: string, includeCance
       flagged: false,
       groupName: row.groupName,
     }));
+  await linkMoves(items);
   return {
     ...empty,
     days: days.map((date) => ({

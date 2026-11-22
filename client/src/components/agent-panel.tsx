@@ -78,7 +78,7 @@ export function AgentPanel({ variant = "dock", chrome = true, onlyConfirm = fals
             </div>
           </div>
         ) : null}
-        {(onlyConfirm ? agent.messages.filter((message) => message.confirm).slice(-1) : agent.messages).map((message) => onlyConfirm && message.confirm ? (
+        {(onlyConfirm ? agent.messages.filter((message) => message.confirm && !message.confirmState).slice(-1) : agent.messages).map((message) => onlyConfirm && message.confirm ? (
           <div key={message.id} className="px-4 pb-3 pt-3">
             <p className="pr-10 font-semibold">{message.confirm.title}</p>
             <p className="mt-1 text-xs text-[var(--muted)]">{message.confirm.summary}</p>
@@ -141,20 +141,26 @@ export function AgentPanel({ variant = "dock", chrome = true, onlyConfirm = fals
                         </div>
                       ))}
                     </dl>
-                    <div className="mt-3 flex gap-2">
-                      <Button onClick={() => void agent.confirm(message.confirm!.pendingId)} disabled={agent.busy}>
-                        Подтвердить
-                      </Button>
-                      <Button variant="glass" onClick={() => void agent.reject(message.confirm!.pendingId)}>
-                        Не сейчас
-                      </Button>
-                    </div>
+                    {message.confirmState ? (
+                      <p className="mt-3 inline-flex rounded-full bg-black/5 px-3 py-1 text-xs font-semibold text-[var(--muted)] dark:bg-white/10" data-card-state={message.confirmState}>
+                        {message.confirmState === "done" ? "Выполнено или отменено ранее" : "Устарело — повторите просьбу"}
+                      </p>
+                    ) : (
+                      <div className="mt-3 flex gap-2">
+                        <Button onClick={() => void agent.confirm(message.confirm!.pendingId)} disabled={agent.busy}>
+                          Подтвердить
+                        </Button>
+                        <Button variant="glass" onClick={() => void agent.reject(message.confirm!.pendingId)}>
+                          Не сейчас
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 ) : null}
                 {message.choices?.length ? (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {message.choices.map((choice) => (
-                      <button key={`${choice.clarificationId}-${choice.entityId}`} type="button" className="btn btn-glass h-11 px-3 text-sm" onClick={() => void agent.clarify(choice)}>{choice.label}</button>
+                      <button key={`${choice.clarificationId}-${choice.entityId}`} type="button" disabled={message.restored} title={message.restored ? "Вопрос устарел — спросите заново" : undefined} className={`btn btn-glass h-11 px-3 text-sm ${message.restored ? "opacity-50" : ""}`} onClick={() => void agent.clarify(choice)}>{choice.label}</button>
                     ))}
                   </div>
                 ) : null}
@@ -167,8 +173,8 @@ export function AgentPanel({ variant = "dock", chrome = true, onlyConfirm = fals
                   </a>
                 ) : null}
                 {message.undo ? (
-                  <button className="btn btn-quiet mt-2 h-9 px-2 text-xs" disabled={message.undone} onClick={() => void agent.undo(message.undo!.auditId)}>
-                    {message.undone ? "Отменено" : message.undo.label}
+                  <button className="btn btn-quiet mt-2 h-9 px-2 text-xs" disabled={message.undone || message.undoState === "stale"} onClick={() => void agent.undo(message.undo!.auditId)}>
+                    {message.undone ? "Отменено" : message.undoState === "stale" ? "Устарело" : message.undo.label}
                   </button>
                 ) : null}
               </div>

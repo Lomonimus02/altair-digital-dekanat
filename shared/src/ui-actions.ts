@@ -18,6 +18,7 @@ export const UI_ACTIONS: UiAction[] = [
   { id: "nav-teach", label: "Сегодня", roles: ["teacher"], to: "/teach", tool: "teacher_home" },
   { id: "nav-journal", label: "Журнал", roles: ["teacher"], to: "/teach/journal", tool: "teacher_open_roll" },
   { id: "nav-queue", label: "Проверка", roles: ["teacher"], to: "/teach/homework", tool: "teacher_list_submissions" },
+  { id: "nav-assignments", label: "Задания", roles: ["teacher"], to: "/teach/assignments" },
   { id: "nav-staff", label: "Входящие", roles: ["staff"], to: "/staff", tool: "staff_list_inbox" },
   { id: "nav-news", label: "Новости", roles: ["staff"], to: "/staff/announcements", tool: "staff_publish_announcement" },
   { id: "nav-notifications", label: "Уведомления", roles: ["student", "teacher", "staff"], to: "/notifications", tool: "mark_notifications_read" },

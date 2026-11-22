@@ -207,6 +207,7 @@ export function parseIntent(message: string, role: Role, disciplines: string[] =
   if (role === "staff") {
     return say("Могу разобрать входящие, сменить статус заявки или опубликовать объявление.");
   }
+  if (role === "teacher") return say("Могу поставить оценку или явку, показать оценки и пропуски студента, список группы, должников и выданные задания. Например: «оценки Сорокина» или «поставь Громову 5 за 18.11 по БД».");
   return say("Могу открыть расписание, прикинуть сессию, заказать справку или найти заявку. Например: «что завтра» или «справка для военкомата».");
 }
 
@@ -280,7 +281,43 @@ function splitTeacherConjunction(raw: string): Proposal | null {
   return combineParts([firstPhrase, attachTail(secondBase, tail)]);
 }
 
+const ASK_STOP = new Set(["какие", "какая", "какой", "каких", "сколько", "покажи", "покажите", "кто", "что", "есть", "ли", "список", "средний", "средняя", "средн", "итог", "оценки", "оценок", "оценка", "баллы", "баллов", "балл", "пропуски", "пропусков", "пропуск", "посещаемость", "журнал", "группы", "группа", "базы", "данных", "программирование", "программированию", "информационные", "технологии", "сейчас", "всего", "студента", "студентки", "семестр", "семестре", "предмету", "предмет", "успеваемость", "скажи", "подскажи", "какое", "был", "была", "было", "мне", "его", "её", "ее"]);
+
+function askedStudent(raw: string, t: string) {
+  const after = t.match(/(?:^|\s)у\s+([а-яё-]{3,}(?:\s+[а-яё]{3,})?)/)?.[1]
+    ?? t.match(/(?:оценк\S*|балл\S*|пропуск\S*|итог\S*|посещаемост\S*|успеваемост\S*|средн\S*(?:\s+балл\S*)?)\s+(?:студент\S*\s+)?([а-яё-]{3,}(?:\s+[а-яё]{3,})?)/)?.[1];
+  const words = (after ?? "").split(/\s+/).filter((word) => word && !ASK_STOP.has(word) && !/^(по|за|в|на|у)$/.test(word) && !/^(бд|баз|прог|информац)/.test(word));
+  if (words.length) return words.slice(0, 2).join(" ");
+  const capital = raw.split(/[^А-Яа-яЁё-]+/).slice(1).find((word) => /^[А-ЯЁ][а-яё]{2,}$/.test(word) && !ASK_STOP.has(norm(word)) && !/^(Баз|Прог|Информац|Данн)/.test(word));
+  return capital ?? "";
+}
+
+function teacherQuestion(raw: string, t: string): Proposal | null {
+  if (/поставь|поставьте|отметь|отметьте|верни|выдай|убери|сними|удали|исправь|измени/.test(t)) return null;
+  const asks = /\?\s*$/.test(raw) || /^(какие|какая|какой|каких|сколько|покажи|покажите|кто|у кого|что|есть ли|список|средн|итог|подскажи|скажи)/.test(t);
+  if (!asks && !/(^|\s)(оценки|пропуски|средний балл|итог|список группы|должники|без оценок)(\s|$)/.test(t)) return null;
+  const groupName = t.match(/[а-яё]{1,3}-\d-\d{2}-\d{2}/i)?.[0]?.toUpperCase();
+  const discipline = disciplineHint(t);
+  const extra = { ...(groupName ? { groupName } : {}), ...(discipline ? { discipline } : {}) };
+  if (/непровер|на проверк|очередь/.test(t)) return null;
+  if (/задани/.test(t) && /выдан|какие|статус|сдал|список|сколько|покажи/.test(t)) return step("Смотрю выданные задания.", "teacher_list_assignments", extra);
+  if (/список групп|состав групп|кто в групп|студенты групп|сколько студент|список студент/.test(t)) return step("Смотрю список группы.", "teacher_group_info", { ...extra, topic: "roster" });
+  if (/без оцен|нет оцен|не получил|ни одной оцен/.test(t)) return step("Смотрю, у кого нет оценок.", "teacher_group_info", { ...extra, topic: "no_grade" });
+  if (/должник|долг|задолж|не успева|ниже порог|отста/.test(t)) return step("Смотрю должников.", "teacher_group_info", { ...extra, topic: "debts" });
+  const name = askedStudent(raw, t);
+  const absence = /пропуск|пропуст|посещаем|прогул|отсутств|н-ки|энки/.test(t);
+  if (absence && !name) return step("Смотрю пропуски группы.", "teacher_group_info", { ...extra, topic: "attendance" });
+  if (name && (absence || /оцен|балл|средн|итог|успеваем|как дела|как учится/.test(t))) {
+    const topic = absence ? "attendance" : /средн|итог|сколько балл/.test(t) && !/оценк/.test(t) ? "average" : "grades";
+    return step("Смотрю журнал студента.", "teacher_student_info", { studentName: name, ...extra, topic });
+  }
+  if (asks && /оцен|балл|пропуск/.test(t)) return say("Чьи оценки показать? Назовите студента, например: «оценки Сорокина» или «кто без оценок по БД».");
+  return null;
+}
+
 function parseTeacher(t: string, raw: string): Proposal | null {
+  const question = teacherQuestion(raw, t);
+  if (question) return question;
   const together = splitTeacherConjunction(raw);
   if (together) return together;
   if (/убери\s+оценк|сними\s+оценк|удали\s+оценк/.test(t)) {
